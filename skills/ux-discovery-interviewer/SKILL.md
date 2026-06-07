@@ -10,7 +10,7 @@ description: |
 
 # UX Discovery Interviewer
 
-The discovery interview is inherently turn-by-turn and interactive. It runs as a **dedicated agent session** (`ux-discovery-interviewer`) so the persona is fully isolated. The two sessions coordinate via **intercom**: the main agent sends an ask, the interviewer replies with the problem summary when the user types `/discovery-done`.
+The discovery interview runs as an **async subagent** and communicates entirely through **intercom**. The user never leaves the main session — the main agent relays each question to the user and each answer back to the interviewer. The interviewer maintains the conversational state and conducts the full interview turn by turn.
 
 ## When to Trigger
 
@@ -20,23 +20,33 @@ The discovery interview is inherently turn-by-turn and interactive. It runs as a
 
 Skip if the user already has a clear, grounded problem statement.
 
-## How to Hand Off (main agent side)
+## How to Run the Interview (main agent side)
 
-1. **Send an intercom ask** to the `ux-discovery-interviewer` session to establish the return channel:
+1. **Launch the interviewer as an async subagent**, passing the current session name and any initial context the user provided:
    ```
-   intercom action=ask to=ux-discovery-interviewer message="Ready to receive discovery summary when the interview is complete."
+   subagent agent=ux-discovery-interviewer async=true task="<initial context from user>"
    ```
-2. **Tell the user** to open a new pi session and select the `ux-discovery-interviewer` agent (or run `pi --agent ux-discovery-interviewer`).
-3. **Wait** — the intercom ask blocks until the interviewer sends the reply. The interviewer will send the problem summary automatically when the user types `/discovery-done`.
-4. Once the reply arrives, **proceed with spec drafting** using the problem summary as input.
+
+2. **Enter the relay loop** — wait for intercom asks from the interviewer, present each question to the user naturally (not as a raw intercom message), collect the answer, and send it back as an intercom reply:
+   ```
+   intercom action=pending   → shows the interviewer's question
+   (present question to user, get their answer)
+   intercom action=reply message="<user's answer>"
+   ```
+
+3. **Repeat** until the interviewer sends a final `intercom send` (not an ask) containing the problem summary. You'll know it's the summary rather than a question because it arrives as a non-blocking send, not a pending ask.
+
+4. **Proceed with spec drafting** using the problem summary as input — hand it to `/spec` or use it to start the planning phase.
+
+## Presenting Questions to the User
+
+When relaying the interviewer's questions, present them naturally as your own words — don't expose the intercom mechanics. The user should experience a smooth conversation, not see "the interviewer asked via intercom that…".
 
 ## What the Interviewer Does
 
 The `ux-discovery-interviewer` agent:
-- Conducts a structured, turn-by-turn problem-space interview (one question per message)
-- Never discusses solutions, architecture, or technology
-- On `/discovery-done`: synthesises a structured problem summary (who, pain, frequency, workarounds, cost of inaction, prior attempts, success criteria) and sends it back via intercom reply
-
-## Inline Alternative
-
-If the user is already in a conversation and doesn't want to switch sessions, you can conduct the interview inline by adopting the interviewer persona yourself — read `agents/ux-discovery-interviewer.md` for the full question arc and behavioural rules. In this case you do not use intercom; just proceed with spec drafting after the summary.
+- Reads project context to ground its questions
+- Follows a structured question arc: opening → pain → workarounds → stakes → prior attempts → success → constraints
+- Asks one question at a time, goes deep before broad
+- Stays strictly in problem-space — never discusses solutions
+- When the picture is complete: synthesises a structured problem summary (who, pain, frequency, workarounds, cost of inaction, prior attempts, success criteria) and sends it to the main session
