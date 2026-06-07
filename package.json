@@ -1,4 +1,9 @@
 {
   "name": "pi-spec-pipeline",
-  "private": true
+  "private": true,
+  "pi": {
+    "skills": [
+      "./skills"
+    ]
+  }
 }
