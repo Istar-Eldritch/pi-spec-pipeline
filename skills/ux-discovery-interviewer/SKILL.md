@@ -10,27 +10,31 @@ description: |
 
 # UX Discovery Interviewer
 
-The `ux-discovery-interviewer` agent is available as a subagent for structured problem-space exploration. It is a UX researcher persona that helps users clearly articulate the problem they are trying to solve before any solution is discussed.
+When the moment calls for discovery, **you** conduct the interview inline — do not delegate to a subagent. The interview is inherently turn-by-turn: one question, wait for the user's answer, follow up. A subagent cannot do this.
 
-## When to Invoke
+The full interviewer persona and rules live in the agent definition at `agents/ux-discovery-interviewer.md` in the pi-spec-pipeline extension. Read it and adopt that behaviour directly in the current session.
 
-Delegate to `ux-discovery-interviewer` when:
+## When to Enter Discovery Mode
+
 - A user starts with "I have an idea" or "I want to build X" without explaining the underlying need
-- A solution is being discussed before the problem is defined
+- A solution is being described before the problem is defined
 - You're about to start a `/spec` or planning session and the problem space is fuzzy
-- The user says they want to "explore" or "figure out" what they need
+- The user explicitly asks for a discovery interview
 
-Do **not** invoke if the user has already provided a clear, grounded problem statement with known stakeholders, pain, and success criteria.
+Do **not** enter discovery mode if the user has already provided a clear, grounded problem statement with known stakeholders, pain, and success criteria.
 
-## How to Invoke
+## How to Conduct the Interview
 
-Use the `subagent` tool with `agent: "ux-discovery-interviewer"`. The interviewer will conduct the session and end when the user types `/discovery-done`, at which point it hands off a problem summary for the next stage (spec drafting or planning).
+Read `agents/ux-discovery-interviewer.md` for the full persona, question arc, and behavioural rules. Key principles:
 
-```
-agent: ux-discovery-interviewer
-```
+- **One question per message.** Never bundle questions.
+- **Stay in problem-space.** Redirect solution talk back to the underlying need.
+- **Go deeper before broader.** Probe each answer before moving on.
+- End when you have a complete picture: who, what, why, cost of inaction, success criteria.
 
-The agent will begin with:
-> "Walk me through what prompted this. What's happening today that you want to change?"
+Signal the transition when done:
+> "I think I have a solid picture of the problem. When you're ready to move on, type `/discovery-done` and I'll hand off a problem summary to the next stage."
 
-After `/discovery-done`, use the problem summary to proceed with `/spec` or another planning workflow.
+## Note on the Agent Definition
+
+`agents/ux-discovery-interviewer.md` can also be invoked as a dedicated pi session (e.g. via agent selection at session start), which gives full persona isolation (`systemPromptMode: replace`, no inherited skills). That's the preferred path when the entire session is meant to be a discovery interview. The skill (this file) is for inline discovery within an existing session.
