@@ -10,31 +10,33 @@ description: |
 
 # UX Discovery Interviewer
 
-When the moment calls for discovery, **you** conduct the interview inline — do not delegate to a subagent. The interview is inherently turn-by-turn: one question, wait for the user's answer, follow up. A subagent cannot do this.
+The discovery interview is inherently turn-by-turn and interactive. It runs as a **dedicated agent session** (`ux-discovery-interviewer`) so the persona is fully isolated. The two sessions coordinate via **intercom**: the main agent sends an ask, the interviewer replies with the problem summary when the user types `/discovery-done`.
 
-The full interviewer persona and rules live in the agent definition at `agents/ux-discovery-interviewer.md` in the pi-spec-pipeline extension. Read it and adopt that behaviour directly in the current session.
+## When to Trigger
 
-## When to Enter Discovery Mode
+- User starts with "I have an idea", "I want to build X", or describes a solution before defining the need
+- The problem space is fuzzy before a `/spec` or planning session
+- User explicitly asks for a discovery interview
 
-- A user starts with "I have an idea" or "I want to build X" without explaining the underlying need
-- A solution is being described before the problem is defined
-- You're about to start a `/spec` or planning session and the problem space is fuzzy
-- The user explicitly asks for a discovery interview
+Skip if the user already has a clear, grounded problem statement.
 
-Do **not** enter discovery mode if the user has already provided a clear, grounded problem statement with known stakeholders, pain, and success criteria.
+## How to Hand Off (main agent side)
 
-## How to Conduct the Interview
+1. **Send an intercom ask** to the `ux-discovery-interviewer` session to establish the return channel:
+   ```
+   intercom action=ask to=ux-discovery-interviewer message="Ready to receive discovery summary when the interview is complete."
+   ```
+2. **Tell the user** to open a new pi session and select the `ux-discovery-interviewer` agent (or run `pi --agent ux-discovery-interviewer`).
+3. **Wait** — the intercom ask blocks until the interviewer sends the reply. The interviewer will send the problem summary automatically when the user types `/discovery-done`.
+4. Once the reply arrives, **proceed with spec drafting** using the problem summary as input.
 
-Read `agents/ux-discovery-interviewer.md` for the full persona, question arc, and behavioural rules. Key principles:
+## What the Interviewer Does
 
-- **One question per message.** Never bundle questions.
-- **Stay in problem-space.** Redirect solution talk back to the underlying need.
-- **Go deeper before broader.** Probe each answer before moving on.
-- End when you have a complete picture: who, what, why, cost of inaction, success criteria.
+The `ux-discovery-interviewer` agent:
+- Conducts a structured, turn-by-turn problem-space interview (one question per message)
+- Never discusses solutions, architecture, or technology
+- On `/discovery-done`: synthesises a structured problem summary (who, pain, frequency, workarounds, cost of inaction, prior attempts, success criteria) and sends it back via intercom reply
 
-Signal the transition when done:
-> "I think I have a solid picture of the problem. When you're ready to move on, type `/discovery-done` and I'll hand off a problem summary to the next stage."
+## Inline Alternative
 
-## Note on the Agent Definition
-
-`agents/ux-discovery-interviewer.md` can also be invoked as a dedicated pi session (e.g. via agent selection at session start), which gives full persona isolation (`systemPromptMode: replace`, no inherited skills). That's the preferred path when the entire session is meant to be a discovery interview. The skill (this file) is for inline discovery within an existing session.
+If the user is already in a conversation and doesn't want to switch sessions, you can conduct the interview inline by adopting the interviewer persona yourself — read `agents/ux-discovery-interviewer.md` for the full question arc and behavioural rules. In this case you do not use intercom; just proceed with spec drafting after the summary.
