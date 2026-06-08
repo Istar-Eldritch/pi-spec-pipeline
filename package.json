@@ -2,6 +2,9 @@
   "name": "pi-spec-pipeline",
   "private": true,
   "pi": {
+    "extensions": [
+      "./index.ts"
+    ],
     "skills": [
       "./skills"
     ]

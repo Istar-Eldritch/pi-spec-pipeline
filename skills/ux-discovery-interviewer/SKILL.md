@@ -36,6 +36,9 @@ Skip if the user already has a clear, grounded problem statement.
 
 3. **Repeat** until the interviewer sends a final `intercom send` (not an ask) containing the problem summary. You'll know it's the summary rather than a question because it arrives as a non-blocking send, not a pending ask.
 
+   - **A discovery interview is human-paced.** Long gaps between turns are expected and normal — the interviewer is *supposed* to be blocked waiting on the user. Do NOT treat "no activity for 60s" stall nudges as a problem or interrupt/resume the run because of them. Only act on a nudge if the interviewer is genuinely stuck (e.g. it errored), not merely waiting for the next human answer.
+   - **Answer grounding/codebase questions yourself.** If the interviewer asks something the codebase can answer ("does the assignee picker wire to a backend?", "what statuses exist today?"), look it up with your own tools and feed the *fact* back as the reply rather than relaying a code question to the user. Reserve the user's attention for intent and product decisions.
+
 4. **Proceed with spec drafting** using the problem summary as input — hand it to `/spec` or use it to start the planning phase.
 
 ## Presenting Questions to the User
@@ -45,8 +48,10 @@ When relaying the interviewer's questions, present them naturally as your own wo
 ## What the Interviewer Does
 
 The `ux-discovery-interviewer` agent:
-- Reads project context to ground its questions
+- **Grounds itself in the codebase first** — establishes current implementation facts with its own read tools before asking anything, so it never asks the user a question the code can answer
 - Follows a structured question arc: opening → pain → workarounds → stakes → prior attempts → success → constraints
 - Asks one question at a time, goes deep before broad
+- **Enforces phase order**: problem-space (pain/actors/flow in the user's words) before any option/state-machine question
+- Allows "both/neither" answers and reflects repeated answer patterns back to check if they generalize
 - Stays strictly in problem-space — never discusses solutions
-- When the picture is complete: synthesises a structured problem summary (who, pain, frequency, workarounds, cost of inaction, prior attempts, success criteria) and sends it to the main session
+- When the picture is complete: synthesises a structured problem summary (who, pain, frequency, workarounds, cost of inaction, prior attempts, success criteria) and sends it to the main session, splitting any open questions into *user decisions* vs *implementer lookups*
