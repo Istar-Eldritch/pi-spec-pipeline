@@ -1,3 +1,4 @@
+---
 name: implement-pipeline
 description: |
   Invoke the spec-pipeline implementation workflow. Use when a spec document
