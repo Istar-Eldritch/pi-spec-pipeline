@@ -3253,10 +3253,13 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 
 	pi.registerCommand("implement", {
 		description:
-			"Start implementation from a spec file OR text description (text enters discovery mode). Use --no-plan to skip plan generation, --no-review to skip reviews.",
+			"Start implementation from a spec file OR text description (text enters discovery mode). Use --no-plan to skip plan generation, --no-review to skip reviews, --auto to run without interactive TTY (agent-driven).",
 		handler: async (args, ctx) => {
-			if (!ctx.hasUI) {
-				ctx.ui.notify("spec-pipeline requires interactive mode", "error");
+			const argsStr = args || "";
+			const autoMode = argsStr.includes("--auto");
+
+			if (!ctx.hasUI && !autoMode) {
+				ctx.ui.notify("spec-pipeline requires interactive mode. Use --auto for non-interactive (agent-driven) runs.", "error");
 				return;
 			}
 
@@ -3274,12 +3277,13 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			const argWithoutFlags = argsStr
 				.replace("--no-plan", "")
 				.replace("--no-review", "")
+				.replace("--auto", "")
 				.replace(/\s+/g, " ")
 				.trim();
 
 			if (!argWithoutFlags) {
 				ctx.ui.notify(
-					"Usage: /implement [--no-plan] [--no-review] <spec-file-or-description>",
+					"Usage: /implement [--no-plan] [--no-review] [--auto] <spec-file-or-description>",
 					"error",
 				);
 				return;
@@ -3319,9 +3323,12 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 					? path.relative(cwd, specPath)
 					: specPath;
 
+				// Move autoMode into the closure scope so other functions can read it (if needed)
+				const isAutoMode = autoMode;
+
 				// Check for existing active implementation
 				const existingPipeline = getLatestActiveImplPipeline(cwd);
-				if (existingPipeline) {
+				if (existingPipeline && !isAutoMode) {
 					const resume = await ctx.ui.confirm(
 						"Active Implementation Found",
 						`There's an active implementation:\n${formatImplState(existingPipeline)}\n\nStart a NEW implementation? (No = cancel)`,
@@ -3333,6 +3340,9 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 						);
 						return;
 					}
+				} else if (existingPipeline && isAutoMode) {
+					// Auto-mode: skip over existing pipeline detection; start fresh
+					ctx.ui.notify("Auto-mode: overriding existing pipeline (starting fresh)", "info");
 				}
 
 				// Git validation
