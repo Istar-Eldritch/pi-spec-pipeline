@@ -3271,7 +3271,6 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				return;
 			}
 
-			const argsStr = args || "";
 			const noPlan = argsStr.includes("--no-plan");
 			const noReview = argsStr.includes("--no-review");
 			const argWithoutFlags = argsStr
