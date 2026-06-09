@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach, setSystemTime } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
@@ -47,7 +47,7 @@ describe("generatePipelineId", () => {
 		// Mock date for predictable testing
 		const mockDate = new Date("2026-02-01T12:30:45.000Z");
 		vi.useFakeTimers();
-		vi.setSystemTime(mockDate);
+		setSystemTime(mockDate);
 
 		const id = generatePipelineId();
 
@@ -67,7 +67,7 @@ describe("generateSpecTimestamp", () => {
 	it("generates correct timestamp for known date", () => {
 		const mockDate = new Date("2026-02-01T14:35:00.000Z");
 		vi.useFakeTimers();
-		vi.setSystemTime(mockDate);
+		setSystemTime(mockDate);
 
 		const ts = generateSpecTimestamp();
 		expect(ts).toBe("2602011435");
@@ -78,7 +78,7 @@ describe("generateSpecTimestamp", () => {
 	it("pads single-digit months and days", () => {
 		const mockDate = new Date("2026-01-05T08:05:00.000Z");
 		vi.useFakeTimers();
-		vi.setSystemTime(mockDate);
+		setSystemTime(mockDate);
 
 		const ts = generateSpecTimestamp();
 		expect(ts).toBe("2601050805");
@@ -218,7 +218,7 @@ describe("generateConversationalDiscoverySummary", () => {
 describe("createInitialSpecState", () => {
 	beforeEach(() => {
 		vi.useFakeTimers();
-		vi.setSystemTime(new Date("2026-02-01T12:00:00Z"));
+		setSystemTime(new Date("2026-02-01T12:00:00Z"));
 	});
 
 	afterEach(() => {
@@ -535,7 +535,7 @@ Some other content.
 describe("createInitialBrainstormState", () => {
 	beforeEach(() => {
 		vi.useFakeTimers();
-		vi.setSystemTime(new Date("2026-02-17T11:19:00Z"));
+		setSystemTime(new Date("2026-02-17T11:19:00Z"));
 	});
 
 	afterEach(() => {
@@ -593,7 +593,7 @@ describe("brainstorm state CRUD", () => {
 
 	beforeEach(() => {
 		vi.useFakeTimers();
-		vi.setSystemTime(new Date("2026-02-17T11:19:00Z"));
+		setSystemTime(new Date("2026-02-17T11:19:00Z"));
 		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "brainstorm-test-"));
 	});
 
@@ -647,7 +647,7 @@ describe("brainstorm state CRUD", () => {
 		);
 		saveBrainstormState(tmpDir, state);
 
-		vi.setSystemTime(new Date("2026-02-17T12:00:00Z"));
+		setSystemTime(new Date("2026-02-17T12:00:00Z"));
 		saveBrainstormState(tmpDir, state);
 
 		const loaded = loadBrainstormState(tmpDir, state.id);
@@ -661,11 +661,11 @@ describe("brainstorm state CRUD", () => {
 			"first",
 			"docs",
 		);
-		vi.setSystemTime(new Date("2026-02-17T11:00:00Z"));
+		setSystemTime(new Date("2026-02-17T11:00:00Z"));
 		state1.createdAt = new Date().toISOString();
 		saveBrainstormState(tmpDir, state1);
 
-		vi.setSystemTime(new Date("2026-02-17T12:00:00Z"));
+		setSystemTime(new Date("2026-02-17T12:00:00Z"));
 		const state2 = createInitialBrainstormState(
 			"Second",
 			"2602171200",

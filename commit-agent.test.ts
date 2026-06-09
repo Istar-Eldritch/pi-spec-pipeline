@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "bun:test";
 import { EventEmitter } from "node:events";
 import { generateCommitMessage, extractPhaseName, extractDocName } from "./commit-agent.ts";
 import type { CommitMessageContext } from "./commit-agent.ts";
@@ -49,19 +49,6 @@ vi.mock("node:child_process", () => ({
 		return proc;
 	}),
 }));
-
-// fs mocks: tmpdir creation is fine, but we don't actually want to write to
-// disk in unit tests. Mock the small surface we use.
-vi.mock("node:fs", async () => {
-	const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
-	return {
-		...actual,
-		mkdtempSync: vi.fn(() => "/tmp/fake-spec-pipeline-commit"),
-		writeFileSync: vi.fn(),
-		unlinkSync: vi.fn(),
-		rmdirSync: vi.fn(),
-	};
-});
 
 beforeEach(() => {
 	mockOutput = "";

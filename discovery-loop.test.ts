@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
@@ -9,38 +9,21 @@ import {
 	loadSpecState,
 } from "./state.ts";
 
-const { mockRunAgentWithConfig, mockValidateGitRepo, mockLoadPipelineConfig } =
-	vi.hoisted(() => ({
-		mockRunAgentWithConfig: vi.fn(),
-		mockValidateGitRepo: vi.fn(),
-		mockLoadPipelineConfig: vi.fn(),
-	}));
+const mockRunAgentWithConfig = vi.fn();
+const mockValidateGitRepo = vi.fn();
+const mockLoadPipelineConfig = vi.fn();
 
-vi.mock("./agents.ts", async () => {
-	const actual =
-		await vi.importActual<typeof import("./agents.ts")>("./agents.ts");
-	return {
-		...actual,
-		runAgentWithConfig: mockRunAgentWithConfig,
-	};
-});
+vi.mock("./agents.ts", () => ({
+	runAgentWithConfig: mockRunAgentWithConfig,
+}));
 
-vi.mock("./git.ts", async () => {
-	const actual = await vi.importActual<typeof import("./git.ts")>("./git.ts");
-	return {
-		...actual,
-		validateGitRepo: mockValidateGitRepo,
-	};
-});
+vi.mock("./git.ts", () => ({
+	validateGitRepo: mockValidateGitRepo,
+}));
 
-vi.mock("./config.ts", async () => {
-	const actual =
-		await vi.importActual<typeof import("./config.ts")>("./config.ts");
-	return {
-		...actual,
-		loadPipelineConfig: mockLoadPipelineConfig,
-	};
-});
+vi.mock("./config.ts", () => ({
+	loadPipelineConfig: mockLoadPipelineConfig,
+}));
 
 const testProjectConfig = {
 	specsDir: "docs/specs",
@@ -69,6 +52,23 @@ const testProjectConfig = {
 	skipPlanGeneration: false,
 } as const;
 
+
+async function waitFor(assertion: () => void, timeoutMs = 1000) {
+	const deadline = Date.now() + timeoutMs;
+	let lastError: unknown;
+	while (Date.now() < deadline) {
+		try {
+			assertion();
+			return;
+		} catch (error) {
+			lastError = error;
+			await new Promise((resolve) => setTimeout(resolve, 5));
+		}
+	}
+	assertion();
+	throw lastError;
+}
+
 type MockCommand = { handler: (args: string, ctx: any) => Promise<void> };
 type MockEventHandler = (event: any, ctx: any) => Promise<any>;
 
@@ -80,6 +80,7 @@ function createMockPi() {
 		commands,
 		events,
 		sendUserMessage: vi.fn(),
+		sendMessage: vi.fn(),
 		registerCommand: vi.fn((name: string, command: MockCommand) => {
 			commands.set(name, command);
 		}),
@@ -144,7 +145,7 @@ describe("spec discovery loop", () => {
 
 		await pi.commands.get("spec")!.handler("Add authentication", ctx);
 
-		await vi.waitFor(() => {
+		await waitFor(() => {
 			expect(mockRunAgentWithConfig).toHaveBeenCalledTimes(1);
 		});
 
@@ -158,7 +159,7 @@ describe("spec discovery loop", () => {
 		);
 		expect(inputResult).toEqual({ action: "handled" });
 
-		await vi.waitFor(() => {
+		await waitFor(() => {
 			expect(mockRunAgentWithConfig).toHaveBeenCalledTimes(2);
 		});
 		expect(mockRunAgentWithConfig.mock.calls[0][0]).toBe(
@@ -186,7 +187,7 @@ describe("spec discovery loop", () => {
 			output: "READY_TO_DRAFT",
 		});
 
-		await vi.waitFor(() => {
+		await waitFor(() => {
 			expect(pi.sendUserMessage).toHaveBeenCalledTimes(1);
 		});
 
@@ -222,7 +223,7 @@ describe("spec discovery loop", () => {
 
 		await pi.commands.get("spec")!.handler("Add authentication", ctx);
 
-		await vi.waitFor(() => {
+		await waitFor(() => {
 			expect(mockRunAgentWithConfig).toHaveBeenCalledTimes(1);
 		});
 
@@ -261,9 +262,11 @@ describe("spec discovery loop", () => {
 				},
 			],
 		});
-		expect(
-			notifications.some((entry) => entry.message.includes("Follow-up answer")),
-		).toBe(true);
+		expect(pi.sendMessage).toHaveBeenCalledWith(
+			expect.objectContaining({
+				content: expect.stringContaining("Follow-up answer"),
+			}),
+		);
 	});
 
 	it("persists an in-flight follow-up placeholder and then fills the answer", async () => {
@@ -286,7 +289,7 @@ describe("spec discovery loop", () => {
 			);
 
 		await pi.commands.get("spec")!.handler("Add authentication", ctx);
-		await vi.waitFor(() =>
+		await waitFor(() =>
 			expect(mockRunAgentWithConfig).toHaveBeenCalledTimes(1),
 		);
 
@@ -298,7 +301,7 @@ describe("spec discovery loop", () => {
 			ctx,
 		);
 
-		await vi.waitFor(() =>
+		await waitFor(() =>
 			expect(mockRunAgentWithConfig).toHaveBeenCalledTimes(3),
 		);
 
@@ -339,7 +342,7 @@ describe("spec discovery loop", () => {
 			.mockResolvedValueOnce({ output: "READY_TO_DRAFT" });
 
 		await pi.commands.get("spec")!.handler("Add authentication", ctx);
-		await vi.waitFor(() =>
+		await waitFor(() =>
 			expect(mockRunAgentWithConfig).toHaveBeenCalledTimes(1),
 		);
 
@@ -376,7 +379,7 @@ describe("spec discovery loop", () => {
 		});
 		expect(state.discovery?.activeTopic).toBeNull();
 
-		await vi.waitFor(() =>
+		await waitFor(() =>
 			expect(mockRunAgentWithConfig).toHaveBeenCalledTimes(4),
 		);
 		expect(mockRunAgentWithConfig.mock.calls[3][0]).toBe(
@@ -384,7 +387,7 @@ describe("spec discovery loop", () => {
 		);
 		expect(mockRunAgentWithConfig.mock.calls[3][6]).toBe("brainstormAgent");
 
-		await vi.waitFor(() => {
+		await waitFor(() => {
 			expect(pi.sendUserMessage).toHaveBeenCalledTimes(1);
 		});
 
@@ -417,7 +420,7 @@ describe("spec discovery loop", () => {
 			.mockRejectedValueOnce(new Error("follow-up unavailable"));
 
 		await pi.commands.get("spec")!.handler("Add authentication", ctx);
-		await vi.waitFor(() =>
+		await waitFor(() =>
 			expect(mockRunAgentWithConfig).toHaveBeenCalledTimes(1),
 		);
 
@@ -458,7 +461,7 @@ describe("spec discovery loop", () => {
 			.mockResolvedValueOnce({ output: "READY_TO_DRAFT" });
 
 		await pi.commands.get("spec")!.handler("Add authentication", ctx);
-		await vi.waitFor(() =>
+		await waitFor(() =>
 			expect(mockRunAgentWithConfig).toHaveBeenCalledTimes(1),
 		);
 
@@ -468,7 +471,7 @@ describe("spec discovery loop", () => {
 		);
 
 		expect(inputResult).toEqual({ action: "handled" });
-		await vi.waitFor(() =>
+		await waitFor(() =>
 			expect(mockRunAgentWithConfig).toHaveBeenCalledTimes(3),
 		);
 
@@ -493,7 +496,7 @@ describe("spec discovery loop", () => {
 			.mockResolvedValueOnce({ output: "READY_TO_DRAFT" });
 
 		await pi.commands.get("spec")!.handler("Add authentication", ctx);
-		await vi.waitFor(() =>
+		await waitFor(() =>
 			expect(mockRunAgentWithConfig).toHaveBeenCalledTimes(1),
 		);
 
@@ -503,7 +506,7 @@ describe("spec discovery loop", () => {
 		);
 
 		expect(inputResult).toEqual({ action: "handled" });
-		await vi.waitFor(() =>
+		await waitFor(() =>
 			expect(mockRunAgentWithConfig).toHaveBeenCalledTimes(3),
 		);
 
@@ -528,13 +531,13 @@ describe("spec discovery loop", () => {
 
 		await pi.commands.get("spec")!.handler("Add team invitations", ctx);
 
-		await vi.waitFor(() => {
+		await waitFor(() => {
 			expect(mockRunAgentWithConfig).toHaveBeenCalledTimes(1);
 		});
 
 		await pi.commands.get("discovery-done")!.handler("", ctx);
 
-		await vi.waitFor(() => {
+		await waitFor(() => {
 			expect(pi.sendUserMessage).toHaveBeenCalledTimes(1);
 		});
 
@@ -616,7 +619,7 @@ describe("spec discovery loop", () => {
 		);
 		expect(inputResult).toEqual({ action: "handled" });
 
-		await vi.waitFor(() => {
+		await waitFor(() => {
 			expect(mockRunAgentWithConfig).toHaveBeenCalledTimes(1);
 		});
 
@@ -698,7 +701,7 @@ describe("spec discovery loop", () => {
 
 		await pi.commands.get("spec-resume")!.handler(state.id, ctx);
 
-		await vi.waitFor(() => {
+		await waitFor(() => {
 			expect(mockRunAgentWithConfig).toHaveBeenCalledTimes(1);
 		});
 		expect(pi.sendUserMessage).not.toHaveBeenCalled();
