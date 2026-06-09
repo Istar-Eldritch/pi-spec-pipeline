@@ -71,7 +71,9 @@
  */
 
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 // Import types
 import type {
@@ -182,6 +184,33 @@ import { createSystemPrompts, buildPromptOptions } from "./agents-config.ts";
 // ============================================
 // Helpers
 // ============================================
+
+function installBundledSubagents(): void {
+	try {
+		const extensionRoot = path.dirname(fileURLToPath(import.meta.url));
+		const sourceDir = path.join(extensionRoot, "agents");
+		const targetDir = path.join(os.homedir(), ".pi", "agent", "agents");
+
+		if (!fs.existsSync(sourceDir)) return;
+		fs.mkdirSync(targetDir, { recursive: true });
+
+		for (const entry of fs.readdirSync(sourceDir, { withFileTypes: true })) {
+			if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+
+			const sourcePath = path.join(sourceDir, entry.name);
+			const targetPath = path.join(targetDir, entry.name);
+			const sourceContent = fs.readFileSync(sourcePath, "utf-8");
+
+			if (fs.existsSync(targetPath)) continue;
+
+			fs.writeFileSync(targetPath, sourceContent);
+		}
+	} catch (error) {
+		console.warn(
+			`spec-pipeline could not install bundled subagents: ${error instanceof Error ? error.message : String(error)}`,
+		);
+	}
+}
 
 /** Common stop words for generating short names from descriptions */
 const STOP_WORDS = new Set([
@@ -413,6 +442,8 @@ async function promptForShortName(
 }
 
 export default function (pi: ExtensionAPI) {
+	installBundledSubagents();
+
 	// ============================================
 	// UNIFIED CONVERSATIONAL MODE STATE
 	// ============================================
@@ -639,7 +670,9 @@ Output only FOLLOWUP or DECISION. No punctuation. No explanation.`;
 				signal,
 				undefined,
 				"commitMessageWriter",
-				activePipelineState ? getSessionLogDir(cwd, activePipelineState.id) : undefined,
+				activePipelineState
+					? getSessionLogDir(cwd, activePipelineState.id)
+					: undefined,
 			);
 
 			const normalized = result.output.trim().toUpperCase();
@@ -3259,7 +3292,10 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 			const autoMode = argsStr.includes("--auto");
 
 			if (!ctx.hasUI && !autoMode) {
-				ctx.ui.notify("spec-pipeline requires interactive mode. Use --auto for non-interactive (agent-driven) runs.", "error");
+				ctx.ui.notify(
+					"spec-pipeline requires interactive mode. Use --auto for non-interactive (agent-driven) runs.",
+					"error",
+				);
 				return;
 			}
 
@@ -3341,7 +3377,10 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 					}
 				} else if (existingPipeline && isAutoMode) {
 					// Auto-mode: skip over existing pipeline detection; start fresh
-					ctx.ui.notify("Auto-mode: overriding existing pipeline (starting fresh)", "info");
+					ctx.ui.notify(
+						"Auto-mode: overriding existing pipeline (starting fresh)",
+						"info",
+					);
 				}
 
 				// Git validation
