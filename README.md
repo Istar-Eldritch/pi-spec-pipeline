@@ -2,6 +2,10 @@
 
 A comprehensive workflow automation extension for [pi](https://github.com/mariozechner/pi-coding-agent) that takes projects from idea to implementation with AI-assisted specification, planning, review, and coding.
 
+> **Deprecation notice:** `/spec`, `/plan`, `/roadmap`, `/epic`, and `/brainstorm` are slated for
+> deprecation in favour of skills + subagents. `/implement` is the supported core of this extension;
+> the other command families remain functional but will not receive new features.
+
 ## Overview
 
 The spec pipeline automates the complete software development lifecycle with a quality-first, conversational approach:
@@ -462,6 +466,79 @@ Control code review cycles during `/implement`:
 ```
 
 **Note:** Review cycles only apply to `/implement`. Specs/roadmaps/epics don't use automated review - you approve them conversationally.
+
+### Model tiers & escalation
+
+The `/implement` pipeline supports tiered model routing, so you can assign stronger models to
+high-leverage roles (plan, review) and cheaper models to well-constrained work (code, commits).
+
+#### Tier configuration
+
+Add a `tiers` object to `.pi/spec-pipeline.json`:
+
+```json
+{
+  "tiers": {
+    "strong": { "model": "gpt-5.5", "thinking": "high" },
+    "mid":    { "model": "gpt-5.4", "thinking": "medium" },
+    "cheap":  { "model": "gpt-5.4-mini", "thinking": "off" }
+  }
+}
+```
+
+#### Role → tier defaults
+
+| Role | Default tier | Purpose |
+|------|-------------|---------|
+| `planDrafter` | strong | Drafts implementation plans |
+| `codeReviewer` | strong | Reviews implementation |
+| `implementer` | mid | Writes code |
+| `addressReview` | mid | Applies review fixes |
+| `agentCommitMessageWriter` | cheap | Generates commit messages |
+
+#### Resolution precedence
+
+`models.<role>` (explicit) > `tiers.<tier>` (tier lookup) > built-in defaults
+
+#### Escalation configuration
+
+```json
+{
+  "escalation": {
+    "enabled": true,
+    "hardFailureRetries": 1
+  }
+}
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `enabled` | `true` | Master switch for all escalation |
+| `hardFailureRetries` | `1` | Retries at the escalated tier after a hard failure (0–2) |
+
+#### Runtime escalation triggers
+
+1. **Hard failure** — an agent exits with a non-zero code, hits its context limit, or produces
+   no output. The pipeline retries at the next tier up.
+2. **Second failed review cycle** — if `addressReview` fails to earn approval twice, the fixer
+   is escalated (mis-tiered task signal).
+3. **`hard` difficulty marker** — when `planDrafter` marks a phase `Difficulty: hard`, the
+   implementer is routed to the strong tier up front.
+
+#### Resume-retry escalation
+
+`/implement-resume` automatically passes an escalated model config to `retryFailedOperation`
+so that retrying a previously failed operation uses a stronger model tier.
+
+#### Escalation log
+
+Every escalation is appended as a JSONL line to `.pi/spec-pipeline/escalations.log`:
+
+```jsonl
+{"pipelineId":"...","specPath":"...","role":"implementer","phase":2,"fromModel":"gpt-5.4","toModel":"gpt-5.5","reason":"hard_failure","timestamp":"2026-06-09T12:00:00.000Z"}
+```
+
+Use this log to tune your tier assignments over time.
 
 ## Dirty Tree Support
 

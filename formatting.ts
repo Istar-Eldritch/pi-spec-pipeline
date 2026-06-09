@@ -543,6 +543,16 @@ export function formatImplState(state: ImplementationState): string {
 		formatErrorSection(lines, state.lastError);
 	}
 
+	// Escalations section (R9)
+	if (state.escalations && state.escalations.length > 0) {
+		lines.push("");
+		lines.push(`Escalations: ${state.escalations.length}`);
+		for (const esc of state.escalations) {
+			const cycleStr = esc.cycle !== undefined ? ` cycle ${esc.cycle}` : "";
+			lines.push(`  ⬆️ phase ${esc.phase}${cycleStr}: ${esc.role} ${esc.fromModel} → ${esc.toModel} (${esc.reason})`);
+		}
+	}
+
 	lines.push("");
 	lines.push(formatDivider(50));
 

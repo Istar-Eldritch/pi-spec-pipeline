@@ -352,6 +352,7 @@ Create a detailed, executable phase file:
 # Phase N: [Phase Name]
 
 **Estimated Effort**: X days
+**Difficulty**: standard | hard
 
 ## Overview
 Brief description of what this phase accomplishes.
@@ -390,6 +391,11 @@ Brief description of what this phase accomplishes.
 |------|---------|
 | path/to/existing | What sections change |
 
+## Out of Scope
+
+- Explicitly list what this phase must NOT do (deferred work, files not to touch,
+  behaviours not to change).
+
 ## Completion Checklist
 - [ ] Step N.1 complete
 - [ ] Step N.2 complete
@@ -404,6 +410,22 @@ Your plan must be executable with minimal interpretation:
 - **Code examples**: Match project style (check existing code first)
 - **Before/After**: Show actual changes for modifications
 - **Verification**: Real commands that work
+- **Function signatures**: Spell out exact signatures for new/changed functions
+- **Error handling**: State the expected behaviour for failure paths — do not leave it implied
+- **Do-nots**: List the things the implementer must NOT do (the implementer resolves ambiguity worse than you do)
+
+## Difficulty Marker
+
+Set **Difficulty** to \`hard\` only when the phase involves genuinely gnarly work:
+concurrency, data migrations, security-sensitive surfaces, cross-cutting refactors,
+or ambiguous integration points. Otherwise use \`standard\`. The pipeline routes
+\`hard\` phases to a stronger implementation model.
+
+## Audience
+
+Your plan will be executed by a smaller, cheaper model than you. It will follow
+instructions literally and resolve ambiguity poorly. Anything you leave implicit
+may be implemented wrong — resolve all ambiguity NOW, in the plan.
 
 ## Output Format
 
@@ -443,7 +465,16 @@ This is not optional. Every implementation session must end with:
 
 **No implementation is complete until you have run tests and they pass.**
 
-If tests continue to fail after multiple attempts, report the specific failures in your summary so they can be addressed.
+## Iteration Budget
+
+You have a budget of 3 attempts to make the test suite pass. If tests still fail
+after 3 distinct fix attempts, STOP — do not keep iterating. Instead report:
+- What you tried (each attempt, briefly)
+- What still fails (exact test names and errors)
+- Your best hypothesis for the root cause
+
+A precise failure report is valuable input for an escalated retry; endless
+thrashing is not.
 
 ## Code Quality
 
@@ -593,7 +624,8 @@ For each issue in the review:
 After addressing issues, run the full test suite.
 
 - Tests PASS: Review fixes complete
-- Tests FAIL: Fix and re-run until passing
+- Tests FAIL: You have a budget of 2 fix attempts. If tests still fail after 2
+  attempts, STOP and report what you tried, what still fails, and your hypothesis.
 
 ## Summary After Fixes
 

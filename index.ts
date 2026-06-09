@@ -90,10 +90,11 @@ import type {
 	ScopingState,
 	ConversationalPipelineState,
 	BrainstormState,
+	RoleName,
 } from "./types.ts";
 
 // Import config
-import { loadPipelineConfig } from "./config.ts";
+import { loadPipelineConfig, getEscalatedModelConfig } from "./config.ts";
 
 // Import state management
 import {
@@ -171,6 +172,7 @@ import {
 
 // Import review
 import { retryFailedOperation } from "./review.ts";
+import { recordEscalation } from "./escalation.ts";
 import { runAgentWithConfig } from "./agents.ts";
 
 // Import pipelines
@@ -3718,12 +3720,23 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 						return;
 					}
 
+					const errPhase = state.lastError.phase;
+					const errCycle = state.lastError.cycle;
 					const retrySuccess = await retryFailedOperation(
 						state,
 						cwd,
 						projectConfig,
 						() => saveImplState(cwd, state),
 						ctx,
+						{
+							config: getEscalatedModelConfig(projectConfig, state.lastError.role as RoleName),
+							onEscalate: ({ role, fromModel, toModel, reason }) =>
+								recordEscalation(
+									cwd, state,
+									{ role, phase: errPhase, cycle: errCycle, fromModel, toModel, reason },
+									() => saveImplState(cwd, state), (msg, type) => ctx.ui.notify(msg, type),
+								),
+						},
 					);
 
 					if (!retrySuccess) {
@@ -4030,6 +4043,16 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 				lines.push("  Agent Calls by Role:");
 				for (const [role, count] of Object.entries(callsByRole)) {
 					lines.push(`    ${role}: ${count}`);
+				}
+
+				// Escalations section (R10b)
+				if (state.escalations && state.escalations.length > 0) {
+					lines.push("");
+					lines.push(`## Escalations (${state.escalations.length})`);
+					for (const esc of state.escalations) {
+						const cycleStr = esc.cycle !== undefined ? ` cycle ${esc.cycle}` : "";
+						lines.push(`- phase ${esc.phase}${cycleStr}: ${esc.role} ${esc.fromModel} → ${esc.toModel} (${esc.reason}) at ${esc.timestamp}`);
+					}
 				}
 			}
 
