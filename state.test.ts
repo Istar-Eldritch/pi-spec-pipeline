@@ -1,4 +1,12 @@
-import { describe, it, expect, vi, beforeEach, afterEach, setSystemTime } from "bun:test";
+import {
+	describe,
+	it,
+	expect,
+	vi,
+	beforeEach,
+	afterEach,
+	setSystemTime,
+} from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
@@ -15,6 +23,9 @@ import {
 	createInitialBrainstormState,
 	saveSpecState,
 	loadSpecState,
+	loadImplState,
+	getImplStateDir,
+	getImplStatePath,
 	saveBrainstormState,
 	loadBrainstormState,
 	listBrainstormStates,
@@ -759,5 +770,58 @@ describe("brainstorm state CRUD", () => {
 		expect(loaded).not.toBeNull();
 		expect(loaded!.checkpoints).toEqual([]);
 		expect(loaded!.conversationHistory).toEqual([]);
+	});
+});
+
+// ============================================
+// ImplementationState escalations migration
+// ============================================
+
+describe("loadImplState escalations migration", () => {
+	let tmpDir: string;
+
+	beforeEach(() => {
+		tmpDir = fs.mkdtempSync(
+			path.join(os.tmpdir(), "impl-state-escalation-test-"),
+		);
+	});
+
+	afterEach(() => {
+		fs.rmSync(tmpDir, { recursive: true, force: true });
+	});
+
+	it("a saved impl state without escalations loads with escalations: []", () => {
+		const stateDir = getImplStateDir(tmpDir);
+		fs.mkdirSync(stateDir, { recursive: true });
+
+		// Write a minimal impl state without the escalations field
+		const minimalState = {
+			id: "impl-migration-test",
+			implTimestamp: "2606091200",
+			specPath: "docs/spec.md",
+			specContent: "# Spec",
+			stage: "implementation",
+			createdAt: new Date().toISOString(),
+			updatedAt: new Date().toISOString(),
+			phases: ["phase 1"],
+			phasesGenerated: [true],
+			currentPhaseIndex: 0,
+			currentReviewCycle: 1,
+			previousReview: "",
+			phaseCommits: [],
+			checkpoints: [],
+			reviewCyclesCompleted: 0,
+			// NOTE: no 'escalations' field
+		};
+
+		fs.writeFileSync(
+			getImplStatePath(tmpDir, "impl-migration-test"),
+			JSON.stringify(minimalState),
+			"utf-8",
+		);
+
+		const loaded = loadImplState(tmpDir, "impl-migration-test");
+		expect(loaded).not.toBeNull();
+		expect(loaded!.escalations).toEqual([]);
 	});
 });

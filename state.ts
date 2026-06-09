@@ -246,6 +246,10 @@ export function loadImplState(
 		if (state.reviewCyclesCompleted === undefined) {
 			state.reviewCyclesCompleted = 0;
 		}
+		if (state.escalations === undefined) {
+			state.escalations = [];
+			needsSave = true;
+		}
 
 		if (needsSave) {
 			try {

@@ -56,6 +56,26 @@ export const ModelsConfigSchema = Type.Object({
 	commitMessageWriter: Type.Optional(Type.Any()),
 });
 
+// Model tiers: named capability levels that roles map onto (strong > mid > cheap).
+export const TierNameSchema = Type.Union([
+	Type.Literal("strong"),
+	Type.Literal("mid"),
+	Type.Literal("cheap"),
+]);
+
+export const TiersConfigSchema = Type.Object({
+	strong: Type.Optional(ModelConfigSchema),
+	mid: Type.Optional(ModelConfigSchema),
+	cheap: Type.Optional(ModelConfigSchema),
+});
+
+// Escalation behaviour. `hardFailureRetries` is the number of retries allowed
+// at the escalated tier after a hard failure (0 disables auto-retry).
+export const EscalationConfigSchema = Type.Object({
+	enabled: Type.Optional(Type.Boolean()),
+	hardFailureRetries: Type.Optional(Type.Number({ minimum: 0, maximum: 2 })),
+});
+
 // Review cycles configuration (allows 0 to skip code review)
 export const ReviewCyclesConfigSchema = Type.Number({
 	minimum: 0,
@@ -74,6 +94,8 @@ export const SpecPipelineConfigSchema = Type.Object({
 	// Auto-detected from existing specs or template format when not specified
 	specFormat: Type.Optional(Type.String()),
 	models: Type.Optional(ModelsConfigSchema),
+	tiers: Type.Optional(TiersConfigSchema),
+	escalation: Type.Optional(EscalationConfigSchema),
 	reviewCycles: Type.Optional(ReviewCyclesConfigSchema),
 	// Experimental: skip plan generation phase (go directly from spec to implementation)
 	skipPlanGeneration: Type.Optional(Type.Boolean()),
@@ -90,6 +112,9 @@ export type ModelConfig = Static<typeof ModelConfigSchema>;
 export type ModelsConfig = Static<typeof ModelsConfigSchema>;
 export type ThinkingLevel = Static<typeof ThinkingLevelSchema>;
 export type ReviewCyclesConfig = Static<typeof ReviewCyclesConfigSchema>;
+export type TierName = Static<typeof TierNameSchema>;
+export type TiersConfig = Static<typeof TiersConfigSchema>;
+export type EscalationConfig = Static<typeof EscalationConfigSchema>;
 
 // Normalized review cycle count used internally
 export type NormalizedReviewCycles = number;
@@ -155,6 +180,7 @@ export interface ImplementationMetrics {
 	codeReviewCycles: number;
 	codeReviewFirstPassRate: number;
 	skipPlanGeneration: boolean;
+	escalations?: number;
 }
 
 // ============================================
@@ -206,6 +232,8 @@ export interface ProjectConfig {
 		epicDrafter: ModelConfig;
 		epicReviewer: ModelConfig;
 	};
+	tiers?: TiersConfig;
+	escalation: { enabled: boolean; hardFailureRetries: number };
 	// Code review cycle count. Setting to 0 skips code review entirely.
 	reviewCycles: NormalizedReviewCycles;
 	// Experimental: skip plan generation (go directly from spec to implementation)
@@ -242,6 +270,26 @@ export type RoleName =
 	| "roadmapReviewer"
 	| "epicDrafter"
 	| "epicReviewer";
+
+/** Why a role was escalated to a stronger model. */
+export type EscalationReason =
+	| "hard_failure" // agent run failed (non-zero exit, incomplete, limit hit, or failed validation)
+	| "review_cycles" // a fix pass failed to earn approval — task likely mis-tiered
+	| "difficulty_routing" // plan marked the phase `hard`; routed to strong tier up front
+	| "resume_retry"; // /implement-resume retried a failed operation at a higher tier
+
+export interface EscalationRecord {
+	role: RoleName;
+	phase?: number; // 1-indexed phase number
+	cycle?: number; // review cycle, when applicable
+	fromModel: string;
+	toModel: string;
+	reason: EscalationReason;
+	timestamp: string; // ISO
+}
+
+/** Difficulty marker emitted by the planDrafter in each phase plan. */
+export type PlanDifficulty = "standard" | "hard";
 
 export interface ErrorDetails {
 	timestamp: string; // ISO timestamp of error
@@ -458,6 +506,9 @@ export interface ImplementationState {
 	// Git state
 	checkpoints?: string[];
 	errorStash?: string;
+
+	// Escalation audit trail for this run (also appended to .pi/spec-pipeline/escalations.log)
+	escalations?: EscalationRecord[];
 
 	// Error tracking
 	lastError?: ErrorDetails | string;

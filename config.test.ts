@@ -7,10 +7,14 @@ import {
 	formatValidationErrors,
 	DEFAULT_MODEL_CONFIGS,
 	DEFAULT_REVIEW_CYCLES,
+	DEFAULT_ESCALATION,
 	discoverSpecTemplate,
 	discoverSpecConventions,
 	detectSpecFormat,
+	loadPipelineConfig,
+	getEscalatedModelConfig,
 } from "./config.ts";
+import type { ProjectConfig, ModelConfig } from "./types.ts";
 
 describe("validateConfig", () => {
 	describe("valid configurations", () => {
@@ -481,5 +485,286 @@ describe("detectSpecFormat", () => {
 
 	it("strips leading dot from explicit format", () => {
 		expect(detectSpecFormat(".typ", null)).toBe("typ");
+	});
+});
+
+// ============================================
+// Tier-aware model resolution
+// ============================================
+
+describe("tier-aware model resolution (mergeWithDefaults via loadPipelineConfig)", () => {
+	let tmpDir: string;
+
+	beforeEach(() => {
+		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "config-tiers-test-"));
+		fs.mkdirSync(path.join(tmpDir, ".pi"), { recursive: true });
+	});
+
+	afterEach(() => {
+		fs.rmSync(tmpDir, { recursive: true, force: true });
+	});
+
+	function writeConfig(config: object): void {
+		fs.writeFileSync(
+			path.join(tmpDir, ".pi", "spec-pipeline.json"),
+			JSON.stringify(config),
+			"utf-8",
+		);
+	}
+
+	function loadConfig(): ProjectConfig {
+		const result = loadPipelineConfig(tmpDir);
+		if (!result.success) throw new Error((result as any).error);
+		return (result as any).config;
+	}
+
+	it("tiers.mid is used for implementer when models.implementer is absent", () => {
+		writeConfig({
+			tiers: { mid: { model: "mid-tier-model", thinking: "medium" } },
+		});
+		const config = loadConfig();
+		expect(config.models.implementer.model).toBe("mid-tier-model");
+		expect(config.models.implementer.thinking).toBe("medium");
+	});
+
+	it("explicit models.implementer wins over tiers.mid", () => {
+		writeConfig({
+			models: { implementer: { model: "explicit-model", thinking: "high" } },
+			tiers: { mid: { model: "mid-tier-model", thinking: "medium" } },
+		});
+		const config = loadConfig();
+		expect(config.models.implementer.model).toBe("explicit-model");
+	});
+
+	it("no tiers → hardcoded defaults (implementer is gpt-5.5, unchanged)", () => {
+		writeConfig({});
+		const config = loadConfig();
+		expect(config.models.implementer.model).toBe("gpt-5.5");
+	});
+});
+
+// ============================================
+// getEscalatedModelConfig
+// ============================================
+
+describe("getEscalatedModelConfig", () => {
+	function makeProjectConfig(overrides: Partial<ProjectConfig>): ProjectConfig {
+		const defaultModels = {
+			planDrafter: { model: "gpt-5.5", thinking: "high" } as ModelConfig,
+			implementer: { model: "gpt-5.5", thinking: "high" } as ModelConfig,
+			codeReviewer: { model: "gpt-5.4", thinking: "medium" } as ModelConfig,
+			addressReview: { model: "gpt-5.4", thinking: "medium" } as ModelConfig,
+			agentCommitMessageWriter: {
+				model: "gpt-5.4-mini",
+				thinking: "off",
+			} as ModelConfig,
+			roadmapDrafter: { model: "gpt-5.5", thinking: "high" } as ModelConfig,
+			roadmapReviewer: { model: "gpt-5.4", thinking: "medium" } as ModelConfig,
+			epicDrafter: { model: "gpt-5.5", thinking: "high" } as ModelConfig,
+			epicReviewer: { model: "gpt-5.4", thinking: "medium" } as ModelConfig,
+		};
+		return {
+			specsDir: "docs",
+			testCommand: null,
+			contextFiles: [],
+			projectContext: "",
+			projectContextForReviewer: "",
+			projectContextForFixer: "",
+			specTemplate: null,
+			specTemplatePath: null,
+			specConventions: null,
+			specConventionsPath: null,
+			specFormat: "md",
+			models: defaultModels,
+			tiers: undefined,
+			escalation: { enabled: true, hardFailureRetries: 1 },
+			reviewCycles: 2,
+			skipPlanGeneration: false,
+			...overrides,
+		} as ProjectConfig;
+	}
+
+	it("implementer with tiers.strong configured → returns the strong config", () => {
+		const strongConfig: ModelConfig = {
+			model: "strong-tier-model",
+			thinking: "high",
+		};
+		const config = makeProjectConfig({
+			models: {
+				planDrafter: { model: "gpt-5.5", thinking: "high" },
+				implementer: { model: "mid-model", thinking: "medium" },
+				codeReviewer: { model: "gpt-5.4", thinking: "medium" },
+				addressReview: { model: "gpt-5.4", thinking: "medium" },
+				agentCommitMessageWriter: { model: "gpt-5.4-mini", thinking: "off" },
+				roadmapDrafter: { model: "gpt-5.5", thinking: "high" },
+				roadmapReviewer: { model: "gpt-5.4", thinking: "medium" },
+				epicDrafter: { model: "gpt-5.5", thinking: "high" },
+				epicReviewer: { model: "gpt-5.4", thinking: "medium" },
+			},
+			tiers: { strong: strongConfig },
+		});
+		expect(getEscalatedModelConfig(config, "implementer")).toEqual(
+			strongConfig,
+		);
+	});
+
+	it("implementer with NO tiers → returns planDrafter's config (fallback)", () => {
+		const config = makeProjectConfig({
+			models: {
+				planDrafter: { model: "strong-model", thinking: "high" },
+				implementer: { model: "mid-model", thinking: "medium" },
+				codeReviewer: { model: "gpt-5.4", thinking: "medium" },
+				addressReview: { model: "gpt-5.4", thinking: "medium" },
+				agentCommitMessageWriter: { model: "gpt-5.4-mini", thinking: "off" },
+				roadmapDrafter: { model: "strong-model", thinking: "high" },
+				roadmapReviewer: { model: "gpt-5.4", thinking: "medium" },
+				epicDrafter: { model: "strong-model", thinking: "high" },
+				epicReviewer: { model: "gpt-5.4", thinking: "medium" },
+			},
+			tiers: undefined,
+		});
+		expect(getEscalatedModelConfig(config, "implementer")).toEqual({
+			model: "strong-model",
+			thinking: "high",
+		});
+	});
+
+	it("implementer with no tiers AND planDrafter identical to implementer → undefined", () => {
+		// Default models have planDrafter and implementer both as gpt-5.5/high
+		const config = makeProjectConfig({ tiers: undefined });
+		expect(getEscalatedModelConfig(config, "implementer")).toBeUndefined();
+	});
+
+	it("codeReviewer (strong tier) with no tiers → undefined (nowhere to go)", () => {
+		const config = makeProjectConfig({ tiers: undefined });
+		expect(getEscalatedModelConfig(config, "codeReviewer")).toBeUndefined();
+	});
+
+	it("escalation disabled (escalation.enabled: false) → undefined", () => {
+		const config = makeProjectConfig({
+			escalation: { enabled: false, hardFailureRetries: 0 },
+		});
+		expect(getEscalatedModelConfig(config, "implementer")).toBeUndefined();
+	});
+
+	it("$default models (usingDefaultModels path) → undefined", () => {
+		const defaultModels = {
+			planDrafter: { model: "$default", thinking: "off" } as ModelConfig,
+			implementer: { model: "$default", thinking: "off" } as ModelConfig,
+			codeReviewer: { model: "$default", thinking: "off" } as ModelConfig,
+			addressReview: { model: "$default", thinking: "off" } as ModelConfig,
+			agentCommitMessageWriter: {
+				model: "$default",
+				thinking: "off",
+			} as ModelConfig,
+			roadmapDrafter: { model: "$default", thinking: "off" } as ModelConfig,
+			roadmapReviewer: { model: "$default", thinking: "off" } as ModelConfig,
+			epicDrafter: { model: "$default", thinking: "off" } as ModelConfig,
+			epicReviewer: { model: "$default", thinking: "off" } as ModelConfig,
+		};
+		const config = makeProjectConfig({
+			models: defaultModels,
+			usingDefaultModels: true,
+			tiers: { strong: { model: "strong-model", thinking: "high" } },
+		});
+		expect(getEscalatedModelConfig(config, "implementer")).toBeUndefined();
+	});
+
+	it("cheap role (commitMessageWriter) walks to tiers.mid", () => {
+		const midConfig: ModelConfig = {
+			model: "mid-tier-model",
+			thinking: "medium",
+		};
+		const config = makeProjectConfig({
+			models: {
+				planDrafter: { model: "gpt-5.5", thinking: "high" },
+				implementer: { model: "gpt-5.5", thinking: "high" },
+				codeReviewer: { model: "gpt-5.4", thinking: "medium" },
+				addressReview: { model: "gpt-5.4", thinking: "medium" },
+				agentCommitMessageWriter: { model: "cheap-model", thinking: "off" },
+				roadmapDrafter: { model: "gpt-5.5", thinking: "high" },
+				roadmapReviewer: { model: "gpt-5.4", thinking: "medium" },
+				epicDrafter: { model: "gpt-5.5", thinking: "high" },
+				epicReviewer: { model: "gpt-5.4", thinking: "medium" },
+			},
+			tiers: { mid: midConfig },
+		});
+		expect(getEscalatedModelConfig(config, "commitMessageWriter")).toEqual(
+			midConfig,
+		);
+	});
+
+	it("cheap role walks to tiers.strong when only strong is configured", () => {
+		const strongConfig: ModelConfig = {
+			model: "strong-tier-model",
+			thinking: "high",
+		};
+		const config = makeProjectConfig({
+			models: {
+				planDrafter: { model: "some-planner-model", thinking: "high" },
+				implementer: { model: "gpt-5.5", thinking: "high" },
+				codeReviewer: { model: "gpt-5.4", thinking: "medium" },
+				addressReview: { model: "gpt-5.4", thinking: "medium" },
+				agentCommitMessageWriter: { model: "cheap-model", thinking: "off" },
+				roadmapDrafter: { model: "some-planner-model", thinking: "high" },
+				roadmapReviewer: { model: "gpt-5.4", thinking: "medium" },
+				epicDrafter: { model: "some-planner-model", thinking: "high" },
+				epicReviewer: { model: "gpt-5.4", thinking: "medium" },
+			},
+			tiers: { strong: strongConfig },
+		});
+		expect(getEscalatedModelConfig(config, "commitMessageWriter")).toEqual(
+			strongConfig,
+		);
+	});
+});
+
+// ============================================
+// Escalation config normalization
+// ============================================
+
+describe("escalation config normalization", () => {
+	let tmpDir: string;
+
+	beforeEach(() => {
+		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "config-escalation-test-"));
+		fs.mkdirSync(path.join(tmpDir, ".pi"), { recursive: true });
+	});
+
+	afterEach(() => {
+		fs.rmSync(tmpDir, { recursive: true, force: true });
+	});
+
+	function writeConfig(config: object): void {
+		fs.writeFileSync(
+			path.join(tmpDir, ".pi", "spec-pipeline.json"),
+			JSON.stringify(config),
+			"utf-8",
+		);
+	}
+
+	it("absent escalation config → DEFAULT_ESCALATION values", () => {
+		writeConfig({});
+		const result = loadPipelineConfig(tmpDir);
+		if (!result.success) throw new Error((result as any).error);
+		expect((result as any).config.escalation).toEqual({
+			enabled: DEFAULT_ESCALATION.enabled,
+			hardFailureRetries: DEFAULT_ESCALATION.hardFailureRetries,
+		});
+	});
+
+	it("explicit escalation values are respected", () => {
+		writeConfig({ escalation: { enabled: false, hardFailureRetries: 0 } });
+		const result = loadPipelineConfig(tmpDir);
+		if (!result.success) throw new Error((result as any).error);
+		expect((result as any).config.escalation).toEqual({
+			enabled: false,
+			hardFailureRetries: 0,
+		});
+	});
+
+	it("DEFAULT_ESCALATION has enabled: true and hardFailureRetries: 1", () => {
+		expect(DEFAULT_ESCALATION.enabled).toBe(true);
+		expect(DEFAULT_ESCALATION.hardFailureRetries).toBe(1);
 	});
 });

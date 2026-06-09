@@ -13,6 +13,10 @@ import {
 	type ReviewCyclesConfig,
 	type NormalizedReviewCycles,
 	type ProjectConfig,
+	type TierName,
+	type TiersConfig,
+	type EscalationConfig,
+	type RoleName,
 	SpecPipelineConfigSchema,
 } from "./types.ts";
 
@@ -39,6 +43,28 @@ export const DEFAULT_MODEL_CONFIGS: Record<string, ModelConfig> = {
 
 /** Default code review cycle count. Set to 0 to skip code review. */
 export const DEFAULT_REVIEW_CYCLES: NormalizedReviewCycles = 2;
+
+/**
+ * Which tier each role belongs to by default. The plan and the review are the
+ * leverage points (strong); implementation/fixes are well-constrained (mid);
+ * commit messages are mechanical (cheap).
+ */
+export const ROLE_TIERS: Record<string, TierName> = {
+	planDrafter: "strong",
+	implementer: "mid",
+	codeReviewer: "strong",
+	addressReview: "mid",
+	agentCommitMessageWriter: "cheap",
+	roadmapDrafter: "strong",
+	roadmapReviewer: "strong",
+	epicDrafter: "strong",
+	epicReviewer: "strong",
+};
+
+export const DEFAULT_ESCALATION = {
+	enabled: true,
+	hardFailureRetries: 1,
+} as const;
 
 // ============================================
 // Validation
@@ -101,6 +127,91 @@ function normalizeReviewCycles(
 	return userReviewCycles ?? DEFAULT_REVIEW_CYCLES;
 }
 
+function normalizeEscalation(
+	userEscalation: EscalationConfig | undefined,
+): ProjectConfig["escalation"] {
+	return {
+		enabled: userEscalation?.enabled ?? DEFAULT_ESCALATION.enabled,
+		hardFailureRetries:
+			userEscalation?.hardFailureRetries ??
+			DEFAULT_ESCALATION.hardFailureRetries,
+	};
+}
+
+const TIER_LADDER: Record<TierName, TierName | undefined> = {
+	cheap: "mid",
+	mid: "strong",
+	strong: undefined,
+};
+
+/**
+ * Resolve the model config to escalate `role` to, or undefined when escalation
+ * is impossible/pointless. Walks the tier ladder upward from the role's static
+ * tier (ROLE_TIERS). When no `tiers` are configured, falls back to the
+ * planDrafter config (by convention the strongest configured role) for
+ * mid/cheap roles.
+ */
+export function getEscalatedModelConfig(
+	projectConfig: ProjectConfig,
+	role: RoleName,
+): ModelConfig | undefined {
+	// Step 1: escalation disabled
+	if (!projectConfig.escalation.enabled) return undefined;
+
+	// Step 2: map role to models key
+	let key: string;
+	if (role === "commitMessageWriter") {
+		key = "agentCommitMessageWriter";
+	} else if (role === "brainstormAgent") {
+		return undefined;
+	} else {
+		key = role;
+	}
+	const models = projectConfig.models as Record<
+		string,
+		ModelConfig | undefined
+	>;
+	const current = models[key];
+	if (!current) return undefined;
+
+	// Step 3: get tier for role
+	const tier: TierName = (ROLE_TIERS[key] as TierName | undefined) ?? "mid";
+
+	// Step 4: walk the tier ladder to find a candidate
+	let candidate: ModelConfig | undefined;
+	let next: TierName | undefined = TIER_LADDER[tier];
+	while (next !== undefined) {
+		const tierConfig = projectConfig.tiers?.[next];
+		if (tierConfig) {
+			candidate = tierConfig;
+			break;
+		}
+		next = TIER_LADDER[next];
+	}
+
+	// Step 5: fallback to planDrafter when no tier config and not already strong
+	if (!candidate && tier !== "strong") {
+		candidate = projectConfig.models.planDrafter;
+	}
+
+	// Step 6: no candidate
+	if (!candidate) return undefined;
+
+	// Step 7: $default models
+	if (candidate.model === "$default" || current.model === "$default")
+		return undefined;
+
+	// Step 8: same model is pointless
+	if (
+		candidate.model === current.model &&
+		candidate.thinking === current.thinking
+	)
+		return undefined;
+
+	// Step 9: return candidate
+	return candidate;
+}
+
 /**
  * Merge user-provided model config with defaults
  * Fills in missing values with optimized defaults (R3)
@@ -108,6 +219,7 @@ function normalizeReviewCycles(
  */
 function mergeWithDefaults(
 	userModels: ModelsConfig | undefined,
+	userTiers: TiersConfig | undefined,
 	userReviewCycles: ReviewCyclesConfig | undefined,
 	projectStreamIdleTimeoutMs: number | undefined,
 ): {
@@ -117,30 +229,45 @@ function mergeWithDefaults(
 	// Build complete models config by merging user values with defaults
 	// Note: commitMessageWriter from userModels is intentionally not used (R5a)
 	const models: ProjectConfig["models"] = {
-		planDrafter: userModels?.planDrafter ?? DEFAULT_MODEL_CONFIGS.planDrafter,
-		implementer: userModels?.implementer ?? DEFAULT_MODEL_CONFIGS.implementer,
+		planDrafter:
+			userModels?.planDrafter ??
+			userTiers?.[ROLE_TIERS.planDrafter] ??
+			DEFAULT_MODEL_CONFIGS.planDrafter,
+		implementer:
+			userModels?.implementer ??
+			userTiers?.[ROLE_TIERS.implementer] ??
+			DEFAULT_MODEL_CONFIGS.implementer,
 		codeReviewer:
-			userModels?.codeReviewer ?? DEFAULT_MODEL_CONFIGS.codeReviewer,
+			userModels?.codeReviewer ??
+			userTiers?.[ROLE_TIERS.codeReviewer] ??
+			DEFAULT_MODEL_CONFIGS.codeReviewer,
 		addressReview:
-			userModels?.addressReview ?? DEFAULT_MODEL_CONFIGS.addressReview,
+			userModels?.addressReview ??
+			userTiers?.[ROLE_TIERS.addressReview] ??
+			DEFAULT_MODEL_CONFIGS.addressReview,
 		agentCommitMessageWriter:
 			userModels?.agentCommitMessageWriter ??
+			userTiers?.[ROLE_TIERS.agentCommitMessageWriter] ??
 			DEFAULT_MODEL_CONFIGS.agentCommitMessageWriter,
 		roadmapDrafter:
 			userModels?.roadmapDrafter ??
 			userModels?.planDrafter ??
+			userTiers?.[ROLE_TIERS.roadmapDrafter] ??
 			DEFAULT_MODEL_CONFIGS.roadmapDrafter,
 		roadmapReviewer:
 			userModels?.roadmapReviewer ??
 			userModels?.codeReviewer ??
+			userTiers?.[ROLE_TIERS.roadmapReviewer] ??
 			DEFAULT_MODEL_CONFIGS.roadmapReviewer,
 		epicDrafter:
 			userModels?.epicDrafter ??
 			userModels?.planDrafter ??
+			userTiers?.[ROLE_TIERS.epicDrafter] ??
 			DEFAULT_MODEL_CONFIGS.epicDrafter,
 		epicReviewer:
 			userModels?.epicReviewer ??
 			userModels?.codeReviewer ??
+			userTiers?.[ROLE_TIERS.epicReviewer] ??
 			DEFAULT_MODEL_CONFIGS.epicReviewer,
 	};
 
@@ -566,6 +693,7 @@ function buildProjectConfig(
 	// Note: commitMessageWriter in config.models is silently ignored (R5a)
 	const { models, reviewCycles } = mergeWithDefaults(
 		config.models,
+		config.tiers,
 		config.reviewCycles,
 		config.streamIdleTimeoutMs,
 	);
@@ -586,6 +714,8 @@ function buildProjectConfig(
 		specConventionsPath: conventions.path,
 		specFormat,
 		models,
+		tiers: config.tiers,
+		escalation: normalizeEscalation(config.escalation),
 		reviewCycles,
 		skipPlanGeneration,
 		streamIdleTimeoutMs: config.streamIdleTimeoutMs,
@@ -689,6 +819,8 @@ export function loadPipelineConfig(cwd: string): ConfigLoadResult {
 		>) {
 			projectConfig.models[role] = { model: "$default", thinking: "off" };
 		}
+		projectConfig.tiers = undefined;
+		projectConfig.escalation = { enabled: true, hardFailureRetries: 1 };
 	}
 
 	return {
