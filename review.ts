@@ -14,8 +14,10 @@ import type {
 	AgentCallUsage,
 	AgentOutputEvent,
 	RoleName,
+	EscalationReason,
 } from "./types.ts";
 import { runAgentWithConfig, createProgressCallback } from "./agents.ts";
+import { runAgentWithEscalation } from "./escalation.ts";
 import { getSessionLogDir } from "./state.ts";
 import { createCheckpointAndSave, createAgentCommit } from "./git.ts";
 import { handleAgentError } from "./errors.ts";
@@ -152,6 +154,26 @@ export interface ReviewContext {
 		verdict: ReviewVerdict;
 		output: string;
 	}) => void;
+	/**
+	 * Escalation hooks for the implementation pipeline. When absent, behaviour
+	 * is identical to before (single tier, no auto-retry).
+	 */
+	escalation?: {
+		/** Config to run fix passes with from review cycle 2 onward (mis-tier signal). */
+		addressReviewEscalated?: ModelConfig;
+		/** Escalated config for reviewer hard failures. */
+		codeReviewerEscalated?: ModelConfig;
+		/** Retries at the escalated tier after a hard failure (default 0). */
+		hardFailureRetries?: number;
+		/** Invoked whenever an escalation actually happens. */
+		onEscalate?: (info: {
+			role: RoleName;
+			cycle: number;
+			fromModel: string;
+			toModel: string;
+			reason: EscalationReason;
+		}) => void;
+	};
 }
 
 export interface ReviewOperation {
@@ -215,6 +237,7 @@ export async function runReview(
 
 	let lastReviewOutput = "";
 	let cyclesCompleted = 0;
+	let misTierEscalated = false;
 	(state as ImplementationState).reviewCyclesCompleted = 0;
 	saveFn();
 
@@ -239,42 +262,52 @@ export async function runReview(
 			notify,
 		);
 
-		const reviewStartTime = new Date();
 		// Keep the user message byte-identical across cycles so prompt-cache prefixes
 		// remain reusable. Earlier we appended a "continuing review after fixes" note
 		// on cycle ≥ 2 — that broke cache for every later cycle. The reviewer can
 		// observe applied fixes from git diff/status, so the note carries no signal
 		// the agent doesn't already have.
-		const reviewResult = await runAgentWithConfig(
-			reviewerConfig,
-			reviewTask,
+		const reviewRun = await runAgentWithEscalation({
+			baseConfig: reviewerConfig,
+			escalatedConfig: ctx.escalation?.codeReviewerEscalated,
+			maxEscalatedRetries: ctx.escalation?.hardFailureRetries ?? 0,
+			role,
+			task: reviewTask,
 			cwd,
-			systemPrompts[role],
+			systemPrompt: systemPrompts[role],
 			signal,
 			onOutput,
-			role,
-			ctx.sessionDir,
-		);
-		recordCall?.({
-			role,
-			modelConfig: reviewerConfig,
-			startTime: reviewStartTime,
-			exitCode: reviewResult.exitCode,
-			phase: phaseIndex,
-			cycle,
-			usage: reviewResult.usage,
+			sessionDir: ctx.sessionDir,
+			onAttempt: ({ config, startTime, result }) => {
+				recordCall?.({
+					role,
+					modelConfig: config,
+					startTime,
+					exitCode: result.exitCode,
+					phase: phaseIndex,
+					cycle,
+					usage: result.usage,
+				});
+			},
+			onEscalate: ({ fromModel, toModel }) => {
+				ctx.escalation?.onEscalate?.({
+					role,
+					cycle,
+					fromModel,
+					toModel,
+					reason: "hard_failure",
+				});
+			},
+			notify,
 		});
+		const reviewResult = reviewRun.result;
 
-		if (
-			reviewResult.exitCode !== 0 ||
-			reviewResult.completed === false ||
-			reviewResult.limitHit
-		) {
+		if (reviewRun.failureDescription) {
 			await handleAgentError(
 				cwd,
 				state,
 				reviewResult,
-				reviewerConfig.model,
+				reviewRun.config.model,
 				role,
 				reviewTask,
 				phaseIndex,
@@ -322,43 +355,69 @@ export async function runReview(
 		) {
 			notify(`${phaseCtx} Found significant issues - applying fix`, "info");
 		}
-		notify(
-			`${phaseCtx} Applying fixes (${addressReviewConfig.model})...`,
-			"info",
-		);
+		const escalatedFix = ctx.escalation?.addressReviewEscalated;
+		const fixBase =
+			cycle >= 2 && escalatedFix ? escalatedFix : addressReviewConfig;
+
+		notify(`${phaseCtx} Applying fixes (${fixBase.model})...`, "info");
+
+		// Mis-tier signal: the first cycle where the fix base differs from the
+		// configured addressReview model. Fire onEscalate exactly once per run.
+		if (fixBase !== addressReviewConfig && !misTierEscalated) {
+			misTierEscalated = true;
+			ctx.escalation?.onEscalate?.({
+				role: "addressReview",
+				cycle,
+				fromModel: addressReviewConfig.model,
+				toModel: escalatedFix!.model,
+				reason: "review_cycles",
+			});
+		}
 
 		const fixTaskText = fixTask(lastReviewOutput);
-		const fixStartTime = new Date();
-		const fixResult = await runAgentWithConfig(
-			addressReviewConfig,
-			fixTaskText,
+		const fixRun = await runAgentWithEscalation({
+			baseConfig: fixBase,
+			escalatedConfig:
+				escalatedFix && fixBase !== escalatedFix ? escalatedFix : undefined,
+			maxEscalatedRetries: ctx.escalation?.hardFailureRetries ?? 0,
+			role: "addressReview",
+			task: fixTaskText,
 			cwd,
-			systemPrompts.addressReview,
+			systemPrompt: systemPrompts.addressReview,
 			signal,
 			onOutput,
-			"addressReview",
-			ctx.sessionDir,
-		);
-		recordCall?.({
-			role: "addressReview",
-			modelConfig: addressReviewConfig,
-			startTime: fixStartTime,
-			exitCode: fixResult.exitCode,
-			phase: phaseIndex,
-			cycle,
-			usage: fixResult.usage,
+			sessionDir: ctx.sessionDir,
+			onAttempt: ({ config, startTime, result }) => {
+				recordCall?.({
+					role: "addressReview",
+					modelConfig: config,
+					startTime,
+					exitCode: result.exitCode,
+					phase: phaseIndex,
+					cycle,
+					usage: result.usage,
+				});
+			},
+			onEscalate: ({ fromModel, toModel }) => {
+				ctx.escalation?.onEscalate?.({
+					role: "addressReview",
+					cycle,
+					fromModel,
+					toModel,
+					reason: "hard_failure",
+				});
+			},
+			notify,
 		});
+		const fixResult = fixRun.result;
+		const fixConfig = fixRun.config;
 
-		if (
-			fixResult.exitCode !== 0 ||
-			fixResult.completed === false ||
-			fixResult.limitHit
-		) {
+		if (fixRun.failureDescription) {
 			await handleAgentError(
 				cwd,
 				state,
 				fixResult,
-				addressReviewConfig.model,
+				fixConfig.model,
 				"addressReview",
 				fixTaskText,
 				phaseIndex,
@@ -379,7 +438,7 @@ export async function runReview(
 			state,
 			{
 				role: "addressReview",
-				modelConfig: addressReviewConfig,
+				modelConfig: fixConfig,
 				phase: phaseIndex,
 				phaseName: ctx.phaseName,
 				docName,
@@ -438,6 +497,15 @@ export async function retryFailedOperation(
 			setWidget?: (id: string, content: string[] | undefined) => void;
 		};
 	},
+	escalation?: {
+		config?: ModelConfig;
+		onEscalate?: (info: {
+			role: RoleName;
+			fromModel: string;
+			toModel: string;
+			reason: "resume_retry";
+		}) => void;
+	},
 ): Promise<boolean> {
 	const error = state.lastError;
 	if (!error || typeof error === "string") return false;
@@ -483,6 +551,26 @@ export async function retryFailedOperation(
 			"error",
 		);
 		return false;
+	}
+
+	// Optional escalation: retry the failed operation at a higher tier when an
+	// escalated config is supplied that actually differs from the resolved one.
+	if (
+		escalation?.config &&
+		(escalation.config.model !== modelConfig.model ||
+			escalation.config.thinking !== modelConfig.thinking)
+	) {
+		escalation.onEscalate?.({
+			role: error.role as RoleName,
+			fromModel: modelConfig.model,
+			toModel: escalation.config.model,
+			reason: "resume_retry",
+		});
+		ctx.ui.notify(
+			`🔄 Retrying ${error.role} with escalated model ${escalation.config.model}...`,
+			"info",
+		);
+		modelConfig = escalation.config;
 	}
 
 	const progressCallback = createProgressCallback(

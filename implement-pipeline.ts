@@ -17,6 +17,7 @@ import type {
 	ImplementationMetrics,
 	AgentCallMetrics,
 	RoleName,
+	PlanDifficulty,
 } from "./types.ts";
 import { saveImplState, getSessionLogDir } from "./state.ts";
 import { createAgentCommit, createCommit, getModifiedFiles } from "./git.ts";
@@ -30,8 +31,14 @@ import {
 	formatDivider,
 	formatKeyValue,
 } from "./formatting.ts";
-import { runAgentWithConfig, createProgressCallback } from "./agents.ts";
+import { createProgressCallback } from "./agents.ts";
 import { runReview } from "./review.ts";
+import {
+	runAgentWithEscalation,
+	recordEscalation,
+	parsePlanDifficulty,
+} from "./escalation.ts";
+import { getEscalatedModelConfig } from "./config.ts";
 import { createSystemPrompts, buildPromptOptions } from "./agents-config.ts";
 
 // ============================================
@@ -525,8 +532,6 @@ Explore the codebase first (read, ls, grep, find, bash with read-only commands):
 Then output the plan markdown as your final assistant message. The pipeline will
 capture it and save it for the implementer. Do NOT call write/edit tools.`;
 
-			const planStartTime = new Date();
-
 			// Create progress callback for plan drafting (R17)
 			const planPhaseInfo = `Phase ${phaseIdx + 1}/${state.phases.length} Plan`;
 			const planProgressCallback = createProgressCallback(
@@ -536,35 +541,70 @@ capture it and save it for the implementer. Do NOT call write/edit tools.`;
 				true, // isImplPipeline
 			);
 
-			const planDraftResult = await runAgentWithConfig(
-				planDrafterConfig,
-				planTask,
+			const planRun = await runAgentWithEscalation({
+				baseConfig: planDrafterConfig,
+				escalatedConfig: getEscalatedModelConfig(projectConfig, "planDrafter"),
+				maxEscalatedRetries: projectConfig.escalation.hardFailureRetries,
+				role: "planDrafter",
+				task: planTask,
 				cwd,
-				SYSTEM_PROMPTS.planDrafter,
-				undefined,
-				planProgressCallback, // ← Pass callback (R17)
-				"planDrafter",
+				systemPrompt: SYSTEM_PROMPTS.planDrafter,
+				onOutput: planProgressCallback, // ← Pass callback (R17)
 				sessionDir,
-			);
-			recordAgentCall(
-				metrics,
-				"planDrafter",
-				planDrafterConfig.model,
-				planDrafterConfig.thinking,
-				planStartTime,
-				planDraftResult.exitCode,
-				phaseIdx + 1,
-				undefined,
-				planDraftResult.usage,
-			);
-			save();
+				validate: (result) =>
+					(result.output ?? "").trim().length < 50
+						? `Plan drafter returned empty/too-short output (${(result.output ?? "").trim().length} chars)`
+						: undefined,
+				onAttempt: ({ config, startTime, result }) => {
+					recordAgentCall(
+						metrics,
+						"planDrafter",
+						config.model,
+						config.thinking,
+						startTime,
+						result.exitCode,
+						phaseIdx + 1,
+						undefined,
+						result.usage,
+					);
+					save();
+				},
+				onEscalate: ({ fromModel, toModel }) => {
+					recordEscalation(
+						cwd,
+						state,
+						{
+							role: "planDrafter",
+							phase: phaseIdx + 1,
+							fromModel,
+							toModel,
+							reason: "hard_failure",
+						},
+						save,
+						ctx.ui.notify.bind(ctx.ui),
+					);
+				},
+				notify: ctx.ui.notify.bind(ctx.ui),
+			});
+			const planDraftResult = planRun.result;
+			const planDrafterFinalConfig = planRun.config;
 
-			if (planDraftResult.exitCode !== 0) {
+			if (planRun.failureDescription) {
+				const validateOnly =
+					planDraftResult.exitCode === 0 &&
+					planDraftResult.completed !== false &&
+					!planDraftResult.limitHit;
 				await handleAgentError(
 					cwd,
 					state,
-					planDraftResult,
-					planDrafterConfig.model,
+					validateOnly
+						? {
+								...planDraftResult,
+								error: planRun.failureDescription,
+								completed: false,
+							}
+						: planDraftResult,
+					planDrafterFinalConfig.model,
 					"planDrafter",
 					planTask,
 					undefined,
@@ -579,7 +619,7 @@ capture it and save it for the implementer. Do NOT call write/edit tools.`;
 			ctx.ui.notify(
 				formatAgentSummary(
 					"planDrafter",
-					planDrafterConfig.model,
+					planDrafterFinalConfig.model,
 					planDraftResult.output,
 					"✅",
 					phaseIdx + 1,
@@ -588,14 +628,6 @@ capture it and save it for the implementer. Do NOT call write/edit tools.`;
 			);
 
 			const agentOutput = (planDraftResult.output || "").trim();
-			if (agentOutput.length < 50) {
-				const errorMsg = `Plan drafter returned empty/too-short output (${agentOutput.length} chars); cannot proceed`;
-				state.lastError = errorMsg;
-				save();
-				clearPipelineWidget(ctx);
-				ctx.ui.notify(errorMsg, "error");
-				return;
-			}
 			fs.mkdirSync(path.dirname(fullPhasePath), { recursive: true });
 			fs.writeFileSync(fullPhasePath, agentOutput, "utf-8");
 
@@ -636,13 +668,43 @@ Explore the codebase to understand existing patterns before making changes.`;
 ${specFileRef}`;
 		}
 
+		// Difficulty routing: phases the planner marks `hard` go to the strong tier.
+		const phaseDifficulty: PlanDifficulty = effectiveSkipPlanGeneration
+			? "standard"
+			: parsePlanDifficulty(phasePlan);
+
 		// ========================================
 		// STEP 3: Implementation
 		// ========================================
 		let implementationSummary: string;
 
 		if (!resumingMidPhase) {
-			const implementerConfig = projectConfig.models.implementer;
+			let implementerConfig = projectConfig.models.implementer;
+			const implementerEscalated = getEscalatedModelConfig(
+				projectConfig,
+				"implementer",
+			);
+			const alreadyRouted = state.escalations?.some(
+				(e) => e.reason === "difficulty_routing" && e.phase === phaseIdx + 1,
+			);
+			if (phaseDifficulty === "hard" && implementerEscalated) {
+				if (!alreadyRouted) {
+					recordEscalation(
+						cwd,
+						state,
+						{
+							role: "implementer",
+							phase: phaseIdx + 1,
+							fromModel: implementerConfig.model,
+							toModel: implementerEscalated.model,
+							reason: "difficulty_routing",
+						},
+						save,
+						ctx.ui.notify.bind(ctx.ui),
+					);
+				}
+				implementerConfig = implementerEscalated;
+			}
 
 			updateImplWidget(
 				ctx,
@@ -676,8 +738,6 @@ ${projectConfig.testCommand ? `Run tests with: ${projectConfig.testCommand}` : "
 
 Address all issues raised in the review.`;
 
-			const implementStartTime = new Date();
-
 			// Create progress callback for implementation (R18)
 			const implPhaseInfo = `Phase ${phaseIdx + 1}/${state.phases.length}`;
 			const implProgressCallback = createProgressCallback(
@@ -687,39 +747,77 @@ Address all issues raised in the review.`;
 				true, // isImplPipeline
 			);
 
-			const implementResult = await runAgentWithConfig(
-				implementerConfig,
-				implementTask,
+			const implementRun = await runAgentWithEscalation({
+				baseConfig: implementerConfig,
+				// Already escalated when the phase is hard; otherwise allow a
+				// hard-failure escalation to the implementer's escalated tier.
+				escalatedConfig:
+					phaseDifficulty === "hard" ? undefined : implementerEscalated,
+				maxEscalatedRetries: projectConfig.escalation.hardFailureRetries,
+				role: "implementer",
+				task: implementTask,
 				cwd,
-				SYSTEM_PROMPTS.implementer,
-				undefined,
-				implProgressCallback, // ← Pass callback (R18)
-				"implementer",
+				systemPrompt: SYSTEM_PROMPTS.implementer,
+				onOutput: implProgressCallback, // ← Pass callback (R18)
 				sessionDir,
-			);
-			recordAgentCall(
-				metrics,
-				"implementer",
-				implementerConfig.model,
-				implementerConfig.thinking,
-				implementStartTime,
-				implementResult.exitCode,
-				phaseIdx + 1,
-				undefined,
-				implementResult.usage,
-			);
-			save();
+				validate: async (result) => {
+					const modified = await getModifiedFiles(cwd);
+					const out = (result.output ?? "").trim();
+					return modified.length === 0 &&
+						out.length < MIN_IMPLEMENTER_OUTPUT_CHARS
+						? "Implementer exited without clear completion evidence: no file changes and minimal output"
+						: undefined;
+				},
+				onAttempt: ({ config, startTime, result }) => {
+					recordAgentCall(
+						metrics,
+						"implementer",
+						config.model,
+						config.thinking,
+						startTime,
+						result.exitCode,
+						phaseIdx + 1,
+						undefined,
+						result.usage,
+					);
+					save();
+				},
+				onEscalate: ({ fromModel, toModel }) => {
+					recordEscalation(
+						cwd,
+						state,
+						{
+							role: "implementer",
+							phase: phaseIdx + 1,
+							fromModel,
+							toModel,
+							reason: "hard_failure",
+						},
+						save,
+						ctx.ui.notify.bind(ctx.ui),
+					);
+				},
+				notify: ctx.ui.notify.bind(ctx.ui),
+			});
+			const implementResult = implementRun.result;
+			const implementerFinalConfig = implementRun.config;
 
-			if (
-				implementResult.exitCode !== 0 ||
-				implementResult.completed === false ||
-				implementResult.limitHit
-			) {
+			if (implementRun.failureDescription) {
+				const validateOnly =
+					implementResult.exitCode === 0 &&
+					implementResult.completed !== false &&
+					!implementResult.limitHit;
 				await handleAgentError(
 					cwd,
 					state,
-					implementResult,
-					implementerConfig.model,
+					validateOnly
+						? {
+								...implementResult,
+								error: implementRun.failureDescription,
+								completed: false,
+							}
+						: implementResult,
+					implementerFinalConfig.model,
 					"implementer",
 					implementTask,
 					phaseIdx + 1,
@@ -734,7 +832,7 @@ Address all issues raised in the review.`;
 			ctx.ui.notify(
 				formatAgentSummary(
 					"implementer",
-					implementerConfig.model,
+					implementerFinalConfig.model,
 					implementResult.output,
 					"✅",
 					phaseIdx + 1,
@@ -745,46 +843,13 @@ Address all issues raised in the review.`;
 			const implementOutput = implementResult.output || "";
 			implementationSummary = implementOutput.slice(0, 1500);
 
-			// Silent-failure guard: short assistant output with no working-tree changes means
-			// the agent stream ended without producing real work. Must run BEFORE createAgentCommit
-			// because a successful commit clears the working tree.
-			const modifiedBeforeCommit = await getModifiedFiles(cwd);
-			if (
-				modifiedBeforeCommit.length === 0 &&
-				implementOutput.trim().length < MIN_IMPLEMENTER_OUTPUT_CHARS
-			) {
-				await handleAgentError(
-					cwd,
-					state,
-					{
-						output: implementOutput,
-						exitCode: 0,
-						error:
-							"Implementer exited without clear completion evidence: no file changes and minimal output",
-						completed: false,
-						finishReason: implementResult.finishReason,
-						stopReason: implementResult.stopReason,
-						limitHit: implementResult.limitHit,
-					},
-					implementerConfig.model,
-					"implementer",
-					implementTask,
-					phaseIdx + 1,
-					1,
-					ctx.ui.notify.bind(ctx.ui),
-					save,
-				);
-				clearPipelineWidget(ctx);
-				return;
-			}
-
 			// Create commit after implementation
 			const commitResult = await createAgentCommit(
 				cwd,
 				state,
 				{
 					role: "implementer",
-					modelConfig: implementerConfig,
+					modelConfig: implementerFinalConfig,
 					phase: phaseIdx + 1,
 					phaseName,
 					docName,
@@ -886,6 +951,25 @@ Address all issues raised in the review.`;
 						{ role, phase, cycle, verdict, output },
 						ctx.ui.notify.bind(ctx.ui),
 					);
+				},
+				escalation: {
+					addressReviewEscalated: getEscalatedModelConfig(
+						projectConfig,
+						"addressReview",
+					),
+					codeReviewerEscalated: getEscalatedModelConfig(
+						projectConfig,
+						"codeReviewer",
+					),
+					hardFailureRetries: projectConfig.escalation.hardFailureRetries,
+					onEscalate: ({ role, cycle, fromModel, toModel, reason }) =>
+						recordEscalation(
+							cwd,
+							state,
+							{ role, phase: phaseIdx + 1, cycle, fromModel, toModel, reason },
+							save,
+							ctx.ui.notify.bind(ctx.ui),
+						),
 				},
 			},
 			{
@@ -990,6 +1074,7 @@ Make the necessary fixes.`,
 		phasesApprovedFirstPass = Math.round(state.phases.length * 0.5);
 	}
 
+	metrics.escalations = state.escalations?.length ?? 0;
 	finalizeImplMetrics(metrics, state.phases.length, phasesApprovedFirstPass);
 	state.stage = "completed";
 	save();
