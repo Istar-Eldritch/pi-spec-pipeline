@@ -487,6 +487,12 @@ export interface ImplementationState {
 
 	// Phases state
 	phases: string[];
+	/**
+	 * Per-phase difficulty parsed from the spec's phase table (optional
+	 * Difficulty column). Aligned with `phases`. Absent on older states
+	 * and when the spec has no difficulty markers — treated as "standard".
+	 */
+	phaseDifficulties?: PlanDifficulty[];
 	phasesGenerated: boolean[];
 	currentPhaseIndex: number;
 

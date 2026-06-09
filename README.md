@@ -522,8 +522,21 @@ Add a `tiers` object to `.pi/spec-pipeline.json`:
    no output. The pipeline retries at the next tier up.
 2. **Second failed review cycle** — if `addressReview` fails to earn approval twice, the fixer
    is escalated (mis-tiered task signal).
-3. **`hard` difficulty marker** — when `planDrafter` marks a phase `Difficulty: hard`, the
-   implementer is routed to the strong tier up front.
+3. **`hard` difficulty marker** — the implementer is routed to the strong tier up front when
+   a phase is marked `hard` by either source (hard wins if either says so):
+   - the spec's phase table, via an optional 4th `Difficulty` column — this also works with
+     `skipPlanGeneration: true`:
+
+     ```markdown
+     | Phase | Focus | Effort | Difficulty |
+     |-------|-------|--------|------------|
+     | Phase 1 | Backend API | 2 days | standard |
+     | Phase 2 | Auth migration | 1 day | hard |
+     ```
+
+     (Typst tables take an optional 4th `[hard]` cell; inline phases a trailing `(hard)`:
+     `### Phase 2: Auth migration (hard)`.)
+   - the generated phase plan, when `planDrafter` marks it `Difficulty: hard`.
 
 #### Resume-retry escalation
 

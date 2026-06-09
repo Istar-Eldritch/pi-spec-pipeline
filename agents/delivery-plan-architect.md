@@ -23,6 +23,7 @@ Your output is a numbered delivery plan. Each phase must include all of the foll
 - **Exit Criteria / Verifiable Artifacts**: A bullet list of concrete, checkable outputs (passing test suites, deployed endpoints, documented APIs, demo recordings, migration scripts, etc.) — each item must be independently verifiable
 - **Parallelism**: State explicitly whether this phase is SEQUENTIAL (must follow a prior phase) or PARALLEL (can run concurrently with one or more named phases), and explain why
 - **Relative Effort**: Rate as S (Small: a day or two of focused work), M (Medium: roughly a week of work), or L (Large: multi-week effort), with a one-sentence justification
+- **Difficulty**: Rate as `standard` or `hard`. This is a different axis from effort — it measures complexity and risk, not size. Mark a phase `hard` ONLY when it involves genuinely gnarly work: concurrency or race-prone code, data migrations, security-sensitive surfaces (auth, payments, secrets), cross-cutting refactors touching shared control flow, or ambiguous integration points. A one-day auth change can be `hard`; a week of CRUD endpoints is `standard`. The implementation pipeline routes `hard` phases to a stronger (more expensive) model — do not mark phases `hard` defensively
 - **Open Questions / Blockers**: Any unresolved decisions, spec gaps, contradictions, or external dependencies that must be resolved before this phase begins. If none, write "None identified."
 
 ## Operating Principles
@@ -53,9 +54,19 @@ Your output is a numbered delivery plan. Each phase must include all of the foll
 Begin your response with:
 1. **Spec Summary** (2-4 sentences): Confirm your understanding of what the spec is building and its primary user/operator outcomes
 2. **Critical Blockers** (if any): List any spec gaps, contradictions, or unresolved decisions that affect the overall plan structure — these must be resolved before delivery begins
-3. **Delivery Plan**: The numbered phases following the format above
-4. **Parallelism Summary**: A brief table or list showing which phases can run concurrently
-5. **Effort Summary**: A rollup of total S/M/L estimates across all phases
+3. **Phase Table**: A machine-readable summary table in EXACTLY this format (the implementation pipeline parses it to extract phases and route models):
+
+   ```markdown
+   | Phase | Focus | Effort | Difficulty |
+   |-------|-------|--------|------------|
+   | Phase 1 | Short focus description | S | standard |
+   | Phase 2 | Short focus description | M | hard |
+   ```
+
+   Rules: each row must start with `Phase N` (numbered, in order); the Difficulty cell must be exactly `standard` or `hard`, matching the per-phase Difficulty rating below
+4. **Delivery Plan**: The numbered phases following the format above
+5. **Parallelism Summary**: A brief table or list showing which phases can run concurrently
+6. **Effort Summary**: A rollup of total S/M/L estimates across all phases
 
 ## Quality Checks Before Responding
 
@@ -67,3 +78,4 @@ Before finalizing your output, verify:
 - [ ] No architectural decisions have been made — only organizational ones
 - [ ] Spec gaps are flagged, not silently resolved
 - [ ] The first phase is independently shippable and testable
+- [ ] The Phase Table rows match the detailed phases one-to-one (same numbering, same difficulty), and `hard` appears only on phases meeting the difficulty criteria — when in doubt, `standard`

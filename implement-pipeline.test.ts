@@ -501,3 +501,131 @@ R2: Background provisioning engine
 		});
 	});
 });
+
+describe("extractPhases difficulty column", () => {
+	it("3-column table → all phases standard", () => {
+		const spec = `
+| Phase | Focus | Effort |
+|-------|-------|--------|
+| Phase 1 | Backend API | 2 days |
+| Phase 2 | Frontend UI | 3 days |
+`;
+		const result = extractPhases(spec, TIMESTAMP, SHORT_NAME);
+		expect(result.paths).toHaveLength(2);
+		expect(result.difficulties).toEqual(["standard", "standard"]);
+	});
+
+	it("4-column table with Difficulty cells is parsed per phase", () => {
+		const spec = `
+| Phase | Focus | Effort | Difficulty |
+|-------|-------|--------|------------|
+| Phase 1 | Backend API | 2 days | standard |
+| Phase 2 | Auth migration | 1 day | hard |
+| Phase 3 | Frontend UI | 3 days | standard |
+`;
+		const result = extractPhases(spec, TIMESTAMP, SHORT_NAME);
+		expect(result.paths).toHaveLength(3);
+		expect(result.difficulties).toEqual(["standard", "hard", "standard"]);
+	});
+
+	it("difficulty is case-insensitive", () => {
+		const spec = `
+| Phase | Focus | Effort | Difficulty |
+|-------|-------|--------|------------|
+| Phase 1 | Backend API | 2 days | Hard |
+| Phase 2 | Frontend UI | 3 days | STANDARD |
+`;
+		const result = extractPhases(spec, TIMESTAMP, SHORT_NAME);
+		expect(result.difficulties).toEqual(["hard", "standard"]);
+	});
+
+	it("non-difficulty 4th column values default to standard", () => {
+		const spec = `
+| Phase | Focus | Effort | Owner |
+|-------|-------|--------|-------|
+| Phase 1 | Backend API | 2 days | alice |
+| Phase 2 | Frontend UI | 3 days | bob |
+`;
+		const result = extractPhases(spec, TIMESTAMP, SHORT_NAME);
+		expect(result.paths).toHaveLength(2);
+		expect(result.difficulties).toEqual(["standard", "standard"]);
+	});
+
+	it("a 3-column table's 4th capture never swallows the next row", () => {
+		const spec = `
+| Phase | Focus | Effort |
+|-------|-------|--------|
+| Phase 1 | Backend API | 2 days |
+| Phase 2 | Hard things | 3 days |
+`;
+		const result = extractPhases(spec, TIMESTAMP, SHORT_NAME);
+		// Both rows must be detected as phases (the optional difficulty group
+		// must not consume "Phase 2" across the newline).
+		expect(result.paths).toHaveLength(2);
+		expect(result.paths[0]).toContain("phase1_");
+		expect(result.paths[1]).toContain("phase2_");
+		expect(result.difficulties).toEqual(["standard", "standard"]);
+	});
+
+	it("typst table with 4th [hard] cell is parsed", () => {
+		const spec = `
+#table(
+  columns: 4,
+  [Phase 1], [Backend API], [2 days], [standard],
+  [Phase 2], [Auth migration], [1 day], [hard],
+)
+`;
+		const result = extractPhases(spec, TIMESTAMP, SHORT_NAME);
+		expect(result.paths).toHaveLength(2);
+		expect(result.difficulties).toEqual(["standard", "hard"]);
+	});
+
+	it("typst table without difficulty cells → standard", () => {
+		const spec = `
+#table(
+  columns: 3,
+  [Phase 1], [Backend API], [2 days],
+  [Phase 2], [Frontend UI], [3 days],
+)
+`;
+		const result = extractPhases(spec, TIMESTAMP, SHORT_NAME);
+		expect(result.paths).toHaveLength(2);
+		expect(result.difficulties).toEqual(["standard", "standard"]);
+	});
+
+	it("inline phase with (hard) parenthetical is marked hard", () => {
+		const spec = `
+### Phase 1: Backend API
+### Phase 2: Auth migration (hard)
+### Phase 3: Frontend UI (2 days)
+`;
+		const result = extractPhases(spec, TIMESTAMP, SHORT_NAME);
+		expect(result.isInline).toBe(true);
+		expect(result.paths).toHaveLength(3);
+		expect(result.difficulties).toEqual(["standard", "hard", "standard"]);
+	});
+
+	it("linked legacy table → all standard", () => {
+		const spec = `
+| Phase | Focus | Effort | Details |
+|-------|-------|--------|---------|
+| Phase 1 | Backend API | 2 days | [backend-api](./2602071200_warm_pools/phase1_backend_api.md) |
+`;
+		const result = extractPhases(spec, TIMESTAMP, SHORT_NAME);
+		expect(result.difficulties).toEqual(["standard"]);
+	});
+
+	it("difficulties is always aligned with paths", () => {
+		const spec = `
+| Phase | Focus | Effort | Difficulty |
+|-------|-------|--------|------------|
+| Phase 1 | A | 1 day | hard |
+| Phase 2 | B | 1 day |
+| Phase 3 | C | 1 day | hard |
+`;
+		const result = extractPhases(spec, TIMESTAMP, SHORT_NAME);
+		expect(result.difficulties).toHaveLength(result.paths.length);
+		expect(result.difficulties[0]).toBe("hard");
+		expect(result.difficulties[2]).toBe("hard");
+	});
+});

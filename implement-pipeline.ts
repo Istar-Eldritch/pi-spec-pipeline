@@ -212,20 +212,33 @@ function finalizeImplMetrics(
 // ============================================
 
 /**
+ * Normalize a raw difficulty cell value. Only an exact (case-insensitive)
+ * "hard" routes up — anything else (absent, "standard", effort values,
+ * unrelated columns) is "standard".
+ */
+function normalizeDifficulty(raw: string | undefined): PlanDifficulty {
+	return raw?.trim().toLowerCase() === "hard" ? "hard" : "standard";
+}
+
+/**
  * Extract phases from a spec document.
  *
  * Supports four formats:
- * 1. Table format without links (preferred): | Phase 1 | Focus description | Effort |
+ * 1. Table format without links (preferred): | Phase 1 | Focus description | Effort | Difficulty? |
  * 2. Table format with links (legacy): | Phase 1 | Focus | Effort | [name](./path/phase1.md) |
- * 3. Typst table format: [Phase 1], [Focus description], [Effort],
- * 4. Inline format (fallback): ### Phase 1: Name  (also accepts — – - as separator)
+ * 3. Typst table format: [Phase 1], [Focus description], [Effort], [Difficulty]?,
+ * 4. Inline format (fallback): ### Phase 1: Name (hard)  (also accepts — – - as separator)
+ *
+ * The optional Difficulty cell (`standard` | `hard`, case-insensitive) routes
+ * `hard` phases to the escalated implementer tier — including when plan
+ * generation is skipped. Absent or unrecognized values mean "standard".
  */
 export function extractPhases(
 	specContent: string,
 	specTimestamp: string,
 	shortName: string,
-): { paths: string[]; isInline: boolean } {
-	// First try table format with links (legacy support)
+): { paths: string[]; isInline: boolean; difficulties: PlanDifficulty[] } {
+	// First try table format with links (legacy support; no difficulty column)
 	const linkedPhases: string[] = [];
 	const linkedRegex =
 		/\|\s*Phase\s*\d+\s*\|[^|]+\|[^|]+\|\s*\[([^\]]+)\]\(([^)]+)\)/g;
@@ -235,12 +248,20 @@ export function extractPhases(
 	}
 
 	if (linkedPhases.length > 0) {
-		return { paths: linkedPhases, isInline: false };
+		return {
+			paths: linkedPhases,
+			isInline: false,
+			difficulties: linkedPhases.map(() => "standard" as PlanDifficulty),
+		};
 	}
 
-	// Try new table format without links: | Phase N | Focus description | Effort |
+	// Try new table format without links: | Phase N | Focus | Effort | Difficulty? |
+	// The optional 4th cell is line-bound ([^|\n]) so it can never swallow the
+	// next row when the table only has 3 columns.
 	const tablePhases: string[] = [];
-	const tableRegex = /\|\s*Phase\s*(\d+)\s*\|\s*([^|]+?)\s*\|\s*[^|]+?\s*\|/g;
+	const tableDifficulties: PlanDifficulty[] = [];
+	const tableRegex =
+		/\|\s*Phase\s*(\d+)\s*\|\s*([^|]+?)\s*\|\s*[^|]+?\s*\|(?:[ \t]*([^|\n]+?)[ \t]*\|)?/g;
 	while ((match = tableRegex.exec(specContent)) !== null) {
 		const phaseNum = match[1];
 		const focusDescription = match[2].trim();
@@ -251,15 +272,24 @@ export function extractPhases(
 		tablePhases.push(
 			`${specTimestamp}_${shortName}/phase${phaseNum}_${phaseName}.md`,
 		);
+		tableDifficulties.push(normalizeDifficulty(match[3]));
 	}
 
 	if (tablePhases.length > 0) {
-		return { paths: tablePhases, isInline: false };
+		return {
+			paths: tablePhases,
+			isInline: false,
+			difficulties: tableDifficulties,
+		};
 	}
 
-	// Try Typst table format: [Phase N], [Focus description], [Effort],
+	// Try Typst table format: [Phase N], [Focus], [Effort], [Difficulty]?,
+	// Optional cells are line-bound ([ \t] only) so they can never consume the
+	// next row's [Phase N] cell.
 	const typstPhases: string[] = [];
-	const typstRegex = /\[Phase\s+(\d+)\],\s*\[([^\]]+)\]/g;
+	const typstDifficulties: PlanDifficulty[] = [];
+	const typstRegex =
+		/\[Phase\s+(\d+)\],\s*\[([^\]]+)\](?:,[ \t]*\[([^\]\n]*)\])?(?:,[ \t]*\[([^\]\n]*)\])?/g;
 	while ((match = typstRegex.exec(specContent)) !== null) {
 		const phaseNum = match[1];
 		const focusDescription = match[2].trim();
@@ -270,25 +300,37 @@ export function extractPhases(
 		typstPhases.push(
 			`${specTimestamp}_${shortName}/phase${phaseNum}_${phaseName}.md`,
 		);
+		typstDifficulties.push(normalizeDifficulty(match[4]));
 	}
 
 	if (typstPhases.length > 0) {
-		return { paths: typstPhases, isInline: false };
+		return {
+			paths: typstPhases,
+			isInline: false,
+			difficulties: typstDifficulties,
+		};
 	}
 
-	// Fallback: detect inline phases
+	// Fallback: detect inline phases. A trailing parenthetical of exactly
+	// "(hard)" marks the phase hard; other parentheticals are ignored.
 	const inlinePhases: string[] = [];
+	const inlineDifficulties: PlanDifficulty[] = [];
 	const inlineRegex =
-		/^###\s*Phase\s*(\d+)\s*[:\-\u2013\u2014]\s*(.+?)(?:\s*\([^)]*\))?\s*$/gm;
+		/^###\s*Phase\s*(\d+)\s*[:\-\u2013\u2014]\s*(.+?)(?:\s*\(([^)]*)\))?\s*$/gm;
 	while ((match = inlineRegex.exec(specContent)) !== null) {
 		const phaseNum = match[1];
 		const phaseName = sanitizePhaseDescription(match[2]);
 		inlinePhases.push(
 			`${specTimestamp}_${shortName}/phase${phaseNum}_${phaseName}.md`,
 		);
+		inlineDifficulties.push(normalizeDifficulty(match[3]));
 	}
 
-	return { paths: inlinePhases, isInline: true };
+	return {
+		paths: inlinePhases,
+		isInline: true,
+		difficulties: inlineDifficulties,
+	};
 }
 
 // ============================================
@@ -398,6 +440,7 @@ async function _runImplementPipelineInner(
 
 		const phaseResult = extractPhases(specContent, specTimestamp, shortName);
 		state.phases = phaseResult.paths;
+		state.phaseDifficulties = phaseResult.difficulties;
 
 		if (phaseResult.isInline && state.phases.length > 0) {
 			ctx.ui.notify(
@@ -414,6 +457,7 @@ async function _runImplementPipelineInner(
 			state.phases.push(
 				`${specTimestamp}_${shortName}/phase1_implementation.md`,
 			);
+			state.phaseDifficulties = ["standard"];
 		} else {
 			ctx.ui.notify(`Found ${state.phases.length} phases to implement`, "info");
 		}
@@ -668,10 +712,17 @@ Explore the codebase to understand existing patterns before making changes.`;
 ${specFileRef}`;
 		}
 
-		// Difficulty routing: phases the planner marks `hard` go to the strong tier.
-		const phaseDifficulty: PlanDifficulty = effectiveSkipPlanGeneration
-			? "standard"
-			: parsePlanDifficulty(phasePlan);
+		// Difficulty routing: a `hard` marker routes the implementer to the strong
+		// tier. Two sources, hard wins if either says so:
+		// 1. The spec phase table's optional Difficulty column (state.phaseDifficulties)
+		//    — works even when plan generation is skipped.
+		// 2. The planner's `Difficulty:` marker in the generated phase plan.
+		const phaseDifficulty: PlanDifficulty =
+			state.phaseDifficulties?.[phaseIdx] === "hard"
+				? "hard"
+				: effectiveSkipPlanGeneration
+					? "standard"
+					: parsePlanDifficulty(phasePlan);
 
 		// ========================================
 		// STEP 3: Implementation
