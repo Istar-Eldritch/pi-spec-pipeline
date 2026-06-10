@@ -205,8 +205,10 @@ describe("worktree metadata state round-trip", () => {
 		expect(loaded!.worktree).toBeUndefined();
 
 		// Assert the file on disk is NOT rewritten to add a worktree field
-		// (needsSave must not be triggered for the absent worktree field)
+		// (needsSave must not be triggered for the absent worktree field).
+		// Assert byte-stability across loadImplState per FR-5.2.
 		const diskJson = fs.readFileSync(statePath, "utf-8");
+		expect(diskJson).toBe(originalJson);
 		const diskParsed = JSON.parse(diskJson);
 		expect(diskParsed).not.toHaveProperty("worktree");
 	});
