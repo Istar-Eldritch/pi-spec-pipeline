@@ -14,16 +14,54 @@ export const DEFAULT_MODELS = {
  * Build SystemPromptOptions from a ProjectConfig.
  * This extracts the relevant fields for prompt generation.
  */
-export function buildPromptOptions(projectConfig: {
-	projectContext: string;
-	projectContextForReviewer?: string;
-	projectContextForFixer?: string;
-}): SystemPromptOptions {
+export function buildPromptOptions(
+	projectConfig: {
+		projectContext: string;
+		projectContextForReviewer?: string;
+		projectContextForFixer?: string;
+	},
+	workRoot?: string,
+): SystemPromptOptions {
 	return {
 		projectContext: projectConfig.projectContext,
 		projectContextForReviewer: projectConfig.projectContextForReviewer,
 		projectContextForFixer: projectConfig.projectContextForFixer,
+		workRoot,
 	};
+}
+
+/**
+ * Build the working-directory isolation directive prepended to every role's
+ * system prompt when the pipeline runs against an isolated git worktree.
+ *
+ * Without this, agents fall back to the canonical project path they remember
+ * from prior sessions / memory and `cd` out of the worktree, silently writing
+ * their work into the main checkout (where it is never committed). The directive
+ * names the one directory all work must happen in and forbids leaving it.
+ */
+export function buildWorkspaceDirective(workRoot: string): string {
+	return `## CRITICAL: Working Directory Isolation
+
+Your working directory for this entire task is:
+
+    ${workRoot}
+
+This is an isolated git worktree. ALL of your work MUST happen inside it:
+
+- Run EVERY command from this directory. Do NOT \`cd\` to any other path.
+- Do NOT read-for-edit, write, run \`git\`, or run tests against any other
+  repository checkout — including any parent, sibling, or "canonical" project
+  path you recognise from memory or earlier sessions. That path is NOT your
+  workspace for this run.
+- Use paths relative to this directory. If you use an absolute path, it MUST be
+  under the directory above.
+- File edits, \`git\`, build, and test commands all run here and nowhere else.
+
+Operating outside this directory silently discards your work and is treated as a
+failed run. When in doubt, run \`pwd\` and confirm it matches the path above
+before making changes.
+
+`;
 }
 
 /**
@@ -42,6 +80,14 @@ export interface SystemPromptOptions {
 	 * Falls back to projectContext when not provided.
 	 */
 	projectContextForFixer?: string;
+	/**
+	 * Absolute path of the isolated worktree the agents must operate in. When
+	 * set, a working-directory isolation directive is prepended to every role's
+	 * system prompt. Omit (or pass the project root) for legacy non-worktree
+	 * runs — the directive is still correct there but simply reinforces the
+	 * single working directory.
+	 */
+	workRoot?: string;
 }
 
 /**
@@ -56,12 +102,19 @@ export function createSystemPrompts(
 			? { projectContext: projectContextOrOptions }
 			: projectContextOrOptions;
 
-	const { projectContext, projectContextForReviewer, projectContextForFixer } =
-		options;
+	const {
+		projectContext,
+		projectContextForReviewer,
+		projectContextForFixer,
+		workRoot,
+	} = options;
 	const reviewerContext = projectContextForReviewer ?? projectContext;
 	const fixerContext = projectContextForFixer ?? projectContext;
+	// Prepended to every role prompt so the agent is anchored to the worktree
+	// before it reads anything else. Empty in legacy callers that pass no workRoot.
+	const ws = workRoot ? buildWorkspaceDirective(workRoot) : "";
 
-	return {
+	const prompts = {
 		planDrafter: `You are creating a detailed implementation plan for a spec phase.
 
 This is where you translate high-level spec requirements into specific, executable steps with file paths and code examples.
@@ -378,4 +431,10 @@ Report:
 - Test results
 - Any issues not addressed (with reason)`,
 	} as const;
+
+	// Prepend the working-directory isolation directive to every role prompt.
+	// When `ws` is empty (legacy, no worktree) this is an identity transform.
+	return Object.fromEntries(
+		Object.entries(prompts).map(([role, prompt]) => [role, ws + prompt]),
+	) as typeof prompts;
 }

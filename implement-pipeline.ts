@@ -65,12 +65,6 @@ export interface PipelineRoots {
 // Phase Name Helpers
 // ============================================
 
-/**
- * Minimum implementer output length (chars) below which an empty working tree
- * is treated as a silent failure rather than a successful no-op.
- */
-const MIN_IMPLEMENTER_OUTPUT_CHARS = 80;
-
 /** Stop words to skip when generating phase directory names from descriptions */
 const PHASE_STOP_WORDS = new Set([
 	"a",
@@ -366,7 +360,11 @@ export async function runImplementPipeline(
 	projectConfig: ProjectConfig,
 	ctx: PipelineUIContext,
 ): Promise<void> {
-	const SYSTEM_PROMPTS = createSystemPrompts(buildPromptOptions(projectConfig));
+	// Pass the worktree path so every role prompt is anchored to it (prevents the
+	// agent from cd-ing back to the canonical main checkout and writing work there).
+	const SYSTEM_PROMPTS = createSystemPrompts(
+		buildPromptOptions(projectConfig, roots.workRoot),
+	);
 
 	// Helper to save state (always in the main repo)
 	const save = () => saveImplState(roots.projectRoot, state);
@@ -830,11 +828,20 @@ Address all issues raised in the review.`;
 				sessionDir,
 				validate: async (result) => {
 					const modified = await getModifiedFiles(workRoot);
-					const out = (result.output ?? "").trim();
-					return modified.length === 0 &&
-						out.length < MIN_IMPLEMENTER_OUTPUT_CHARS
-						? "Implementer exited without clear completion evidence: no file changes and minimal output"
-						: undefined;
+					// Zero changes in the worktree is ALWAYS a failure, regardless of how
+					// much the agent narrated. The implementer's job is to modify files in
+					// `workRoot`; an empty tree means it either did nothing or (the failure
+					// this guard exists to catch) operated on a different directory and its
+					// work was silently lost. Previously this was OR-gated with output
+					// length, so a chatty agent that escaped the worktree still "passed".
+					if (modified.length === 0) {
+						return (
+							`Implementer made no file changes in the worktree (${workRoot}). ` +
+							`Every implementation must edit files inside this directory. Verify the ` +
+							`agent ran its commands here and did not cd to another checkout.`
+						);
+					}
+					return undefined;
 				},
 				onAttempt: ({ config, startTime, result }) => {
 					recordAgentCall(
