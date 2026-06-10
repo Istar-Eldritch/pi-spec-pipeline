@@ -412,7 +412,6 @@ function generateShortName(text: string): string {
 	);
 }
 
-
 export default function (pi: ExtensionAPI) {
 	installBundledSubagents();
 
@@ -2414,7 +2413,7 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 
 			if (!argWithoutFlags) {
 				ctx.ui.notify(
-					"Usage: /implement [--no-plan] [--no-review] [--auto] <spec-file-or-description>",
+					"Usage: /implement [--no-plan] [--no-review] [--auto] <delivery-plan.md>",
 					"error",
 				);
 				return;
@@ -2720,12 +2719,24 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 						() => saveImplState(cwd, state),
 						ctx,
 						{
-							config: getEscalatedModelConfig(projectConfig, state.lastError.role as RoleName),
+							config: getEscalatedModelConfig(
+								projectConfig,
+								state.lastError.role as RoleName,
+							),
 							onEscalate: ({ role, fromModel, toModel, reason }) =>
 								recordEscalation(
-									cwd, state,
-									{ role, phase: errPhase, cycle: errCycle, fromModel, toModel, reason },
-									() => saveImplState(cwd, state), (msg, type) => ctx.ui.notify(msg, type),
+									cwd,
+									state,
+									{
+										role,
+										phase: errPhase,
+										cycle: errCycle,
+										fromModel,
+										toModel,
+										reason,
+									},
+									() => saveImplState(cwd, state),
+									(msg, type) => ctx.ui.notify(msg, type),
 								),
 						},
 					);
@@ -3033,8 +3044,11 @@ IMPORTANT: You are in BRAINSTORM MODE. Focus on divergent exploration, not conve
 					lines.push("");
 					lines.push(`## Escalations (${state.escalations.length})`);
 					for (const esc of state.escalations) {
-						const cycleStr = esc.cycle !== undefined ? ` cycle ${esc.cycle}` : "";
-						lines.push(`- phase ${esc.phase}${cycleStr}: ${esc.role} ${esc.fromModel} → ${esc.toModel} (${esc.reason}) at ${esc.timestamp}`);
+						const cycleStr =
+							esc.cycle !== undefined ? ` cycle ${esc.cycle}` : "";
+						lines.push(
+							`- phase ${esc.phase}${cycleStr}: ${esc.role} ${esc.fromModel} → ${esc.toModel} (${esc.reason}) at ${esc.timestamp}`,
+						);
 					}
 				}
 			}
