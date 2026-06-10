@@ -22,10 +22,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import {
-	createWorktree,
-	recreateWorktree,
-} from "./worktree.ts";
+import { createWorktree, recreateWorktree } from "./worktree.ts";
 import { execGit, createCommit } from "./git.ts";
 import { handleAgentError } from "./errors.ts";
 import { createInitialImplState, saveImplState } from "./state.ts";
@@ -81,9 +78,8 @@ describe("Worktree Isolation Regression (FR-7.2 / FR-4.5)", () => {
 		// Add a dirty (uncommitted) file to the main repo
 		const dirtyFile = path.join(mainRepo, "dirty.txt");
 		fs.writeFileSync(dirtyFile, "user work in progress\n");
-		const origStatus = (
-			await execGit(mainRepo, ["status", "--porcelain"])
-		).stdout;
+		const origStatus = (await execGit(mainRepo, ["status", "--porcelain"]))
+			.stdout;
 		const origDirtyBytes = fs.readFileSync(dirtyFile, "utf-8");
 
 		// Create a worktree
@@ -105,7 +101,10 @@ describe("Worktree Isolation Regression (FR-7.2 / FR-4.5)", () => {
 			path.join(workRoot, "impl-file.txt"),
 			"implementation content\n",
 		);
-		const committed = await createCommit(workRoot, "feat: add implementation file");
+		const committed = await createCommit(
+			workRoot,
+			"feat: add implementation file",
+		);
 		expect(committed).toBe(true);
 
 		// ── Assertions ──────────────────────────────────────────────────────
@@ -117,9 +116,8 @@ describe("Worktree Isolation Regression (FR-7.2 / FR-4.5)", () => {
 		expect(newHead).toBe(origHead);
 
 		// 2. git status output must be byte-identical (dirty.txt still untracked)
-		const newStatus = (
-			await execGit(mainRepo, ["status", "--porcelain"])
-		).stdout;
+		const newStatus = (await execGit(mainRepo, ["status", "--porcelain"]))
+			.stdout;
 		expect(newStatus).toBe(origStatus);
 
 		// 3. Dirty file bytes must be unchanged
@@ -127,15 +125,13 @@ describe("Worktree Isolation Regression (FR-7.2 / FR-4.5)", () => {
 		expect(newDirtyBytes).toBe(origDirtyBytes);
 
 		// 4. The commit must be on the impl/ branch …
-		const implLog = (
-			await execGit(mainRepo, ["log", "--oneline", meta.branch])
-		).stdout;
+		const implLog = (await execGit(mainRepo, ["log", "--oneline", meta.branch]))
+			.stdout;
 		expect(implLog).toContain("feat: add implementation file");
 
 		// … and NOT on the triggering checkout's branch
-		const mainLog = (
-			await execGit(mainRepo, ["log", "--oneline", "HEAD"])
-		).stdout;
+		const mainLog = (await execGit(mainRepo, ["log", "--oneline", "HEAD"]))
+			.stdout;
 		expect(mainLog).not.toContain("feat: add implementation file");
 	});
 
@@ -144,9 +140,8 @@ describe("Worktree Isolation Regression (FR-7.2 / FR-4.5)", () => {
 		const dirtyFile = path.join(mainRepo, "user-work.txt");
 		fs.writeFileSync(dirtyFile, "user work in progress\n");
 		const origDirtyBytes = fs.readFileSync(dirtyFile, "utf-8");
-		const origStatus = (
-			await execGit(mainRepo, ["status", "--porcelain"])
-		).stdout;
+		const origStatus = (await execGit(mainRepo, ["status", "--porcelain"]))
+			.stdout;
 		const origHead = (
 			await execGit(mainRepo, ["rev-parse", "HEAD"])
 		).stdout.trim();
@@ -173,7 +168,11 @@ describe("Worktree Isolation Regression (FR-7.2 / FR-4.5)", () => {
 		expect(fs.existsSync(path.join(workRoot, "half-done.txt"))).toBe(true);
 
 		// Set up pipeline state (saved to projectRoot)
-		const state = createInitialImplState("specs/test.md", "# Spec", "2606101218");
+		const state = createInitialImplState(
+			"specs/test.md",
+			"# Spec",
+			"2606101218",
+		);
 		state.worktree = { ...meta };
 		saveImplState(mainRepo, state);
 
@@ -208,9 +207,8 @@ describe("Worktree Isolation Regression (FR-7.2 / FR-4.5)", () => {
 		expect(newHead).toBe(origHead);
 
 		// git status byte-identical (user-work.txt still untracked)
-		const newStatus = (
-			await execGit(mainRepo, ["status", "--porcelain"])
-		).stdout;
+		const newStatus = (await execGit(mainRepo, ["status", "--porcelain"]))
+			.stdout;
 		expect(newStatus).toBe(origStatus);
 
 		// Dirty file content preserved
@@ -231,9 +229,8 @@ describe("Worktree Isolation Regression (FR-7.2 / FR-4.5)", () => {
 		// ── No .pi/spec-pipeline noise in the worktree status ───────────────
 		// State is written to projectRoot/.pi/spec-pipeline/, NOT workRoot.
 		// The worktree should be clean after the reset.
-		const wtStatus = (
-			await execGit(workRoot, ["status", "--porcelain"])
-		).stdout;
+		const wtStatus = (await execGit(workRoot, ["status", "--porcelain"]))
+			.stdout;
 		expect(wtStatus.trim()).toBe("");
 	});
 
@@ -282,25 +279,22 @@ describe("Worktree Isolation Regression (FR-7.2 / FR-4.5)", () => {
 		expect(implTip).not.toBe(origHead);
 
 		// All 3 commits on the impl/ branch
-		const implLog = (
-			await execGit(mainRepo, ["log", "--oneline", meta.branch])
-		).stdout;
+		const implLog = (await execGit(mainRepo, ["log", "--oneline", meta.branch]))
+			.stdout;
 		expect(implLog).toContain("feat(phase1)");
 		expect(implLog).toContain("feat(phase2)");
 		expect(implLog).toContain("feat(phase3)");
 
 		// None of those commits visible on the triggering checkout
-		const mainLog = (
-			await execGit(mainRepo, ["log", "--oneline", "HEAD"])
-		).stdout;
+		const mainLog = (await execGit(mainRepo, ["log", "--oneline", "HEAD"]))
+			.stdout;
 		expect(mainLog).not.toContain("feat(phase1)");
 		expect(mainLog).not.toContain("feat(phase2)");
 		expect(mainLog).not.toContain("feat(phase3)");
 
 		// Worktree is clean after all commits
-		const wtStatus = (
-			await execGit(workRoot, ["status", "--porcelain"])
-		).stdout;
+		const wtStatus = (await execGit(workRoot, ["status", "--porcelain"]))
+			.stdout;
 		expect(wtStatus.trim()).toBe("");
 	});
 
@@ -318,7 +312,11 @@ describe("Worktree Isolation Regression (FR-7.2 / FR-4.5)", () => {
 
 		const workRoot = worktreeResult.meta.path;
 
-		const state = createInitialImplState("specs/test.md", "# Spec", "2606101218");
+		const state = createInitialImplState(
+			"specs/test.md",
+			"# Spec",
+			"2606101218",
+		);
 		state.worktree = { ...worktreeResult.meta };
 		saveImplState(mainRepo, state);
 
@@ -398,10 +396,7 @@ describe("Worktree Recreation Restores Prior Commits (FR-7.4)", () => {
 
 		// Simulate two phase commits
 		for (let i = 1; i <= 2; i++) {
-			fs.writeFileSync(
-				path.join(workRoot, `output${i}.txt`),
-				`Output ${i}\n`,
-			);
+			fs.writeFileSync(path.join(workRoot, `output${i}.txt`), `Output ${i}\n`);
 			const ok = await createCommit(workRoot, `feat: output ${i}`);
 			expect(ok).toBe(true);
 		}
@@ -441,9 +436,8 @@ describe("Worktree Recreation Restores Prior Commits (FR-7.4)", () => {
 		expect(fs.existsSync(path.join(workRoot, "output2.txt"))).toBe(true);
 
 		// Full commit log is intact
-		const logAfterRecreate = (
-			await execGit(workRoot, ["log", "--oneline"])
-		).stdout;
+		const logAfterRecreate = (await execGit(workRoot, ["log", "--oneline"]))
+			.stdout;
 		expect(logAfterRecreate).toContain("feat: output 1");
 		expect(logAfterRecreate).toContain("feat: output 2");
 	});
