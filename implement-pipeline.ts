@@ -21,6 +21,7 @@ import type {
 } from "./types.ts";
 import { saveImplState, getSessionLogDir } from "./state.ts";
 import { createAgentCommit, createCommit, getModifiedFiles } from "./git.ts";
+import { deriveShortName } from "./worktree.ts";
 import { extractPhaseName, extractDocName } from "./commit-agent.ts";
 import { handleAgentError } from "./errors.ts";
 import {
@@ -421,18 +422,10 @@ async function _runImplementPipelineInner(
 		const specContent = state.specContent;
 
 		// Derive short name from spec path
-		const specBasename = path.basename(
-			state.specPath,
-			path.extname(state.specPath),
-		);
-		const shortName = specBasename
-			.replace(/^\d+_spec_/, "")
-			.replace(/^\d+_/, "")
-			.toLowerCase()
-			.replace(/[^a-z0-9_]/g, "_")
-			.slice(0, 30);
+		const shortName = deriveShortName(state.specPath);
 
 		// Try to extract timestamp from spec filename, otherwise use implTimestamp
+		const specBasename = path.basename(state.specPath, path.extname(state.specPath));
 		const timestampMatch = specBasename.match(/^(\d{10})/);
 		const specTimestamp = timestampMatch
 			? timestampMatch[1]

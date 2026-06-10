@@ -433,9 +433,11 @@ export function resolveMainRepoFromWorktree(cwd: string): string | null {
 		const gitDir = match[1].trim();
 		// Navigate from .git/worktrees/<name> up to the repo root
 		const parts = gitDir.split(path.sep);
-		// Remove .git/worktrees/<name> → go up 3 levels
+		// Remove .git/worktrees/<name> → go up 3 levels.
+		// Use join(path.sep) instead of path.join() to preserve the leading
+		// empty segment on absolute paths (e.g. ["" "tmp" "repo"] → "/tmp/repo").
 		if (parts.length >= 3) {
-			const mainRepo = path.join(...parts.slice(0, -3));
+			const mainRepo = parts.slice(0, -3).join(path.sep);
 			return path.isAbsolute(mainRepo) ? mainRepo : path.resolve(cwd, mainRepo);
 		}
 	} catch {
