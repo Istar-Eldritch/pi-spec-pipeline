@@ -37,6 +37,14 @@ Each requirement must be independently verifiable.
 **Out of scope:**
 - ...
 
+## Codebase Map
+
+Ground truth for the implementer — every file the work touches, with anchors verified during exploration:
+
+| Location | Symbol | Role in this work |
+|----------|--------|-------------------|
+| `src/example.ts:42` | `exampleFn()` | Entry point that must call the new check |
+
 ## Open Questions
 
 - [ ] Unresolved decision that may affect requirements
@@ -48,14 +56,20 @@ Detailed `### Phase N: Name` subsections are **optional**; the machine-readable 
 
 ### Phase 1: <Name>  *(optional detail)*
 
-Brief prose describing this phase's capability, layers involved, and any cross-phase constraints. No file paths or code — those belong in the phase plan generated during `/implement`.
+Brief prose describing this phase's capability, layers involved, and any cross-phase constraints.
+
+**Scope:**
+- Modify: `path/to/file.ts:42` (`symbolName`) — what changes there
+- Create: `path/to/new_file.ts`, modeled on `path/to/existing_pattern.ts`
+- Out of bounds: files or behaviors this phase must not touch
 
 ### Phase 2: <Name>  *(optional detail)*
 
 ...
 
 **Rules:**
-- Phase descriptions describe WHAT (capability), not HOW (file paths, function names).
+- Phase scopes say WHERE (file paths, symbols, line anchors) and WHAT — not line-by-line HOW. No code snippets.
+- Pair every `path:line` anchor with a symbol name so it survives line drift.
 - If you use detailed subsections, use `:` as the separator (not em-dash/en-dash) so the fallback parser works.
 
 ## Risks & Mitigations

@@ -46,9 +46,14 @@ The spec includes:
 - Observable success criteria
 - Scope and boundaries
 - Advisory solution approach
+- A codebase map: every file the work touches, anchored with `path:line` and
+  symbol names gathered during codebase exploration
 - Open questions and risks
-- A phased delivery plan: per-phase goals, entry conditions, exit criteria,
-  parallelism, effort, difficulty, and blockers
+- A phased delivery plan: per-phase goals, concrete scopes (files to modify
+  with anchors, files to create, explicit out-of-bounds), entry conditions,
+  exit criteria, parallelism, effort, difficulty, and blockers — written so a
+  less capable implementer model can execute each phase without re-exploring
+  the codebase
 - A final `## Phases (JSON)` section — a fenced ```json block encoding the
   phases (`phase`, `focus`, `effort`, `difficulty`) that `/implement` parses
   to sequence the work and route `hard` phases to a stronger model

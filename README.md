@@ -7,7 +7,7 @@ A workflow automation extension for [pi](https://github.com/mariozechner/pi-codi
 The spec pipeline implements a three-stage, agent-driven development workflow:
 
 1. **Discovery** — The `ux-discovery-interviewer` agent conducts a structured problem-space interview before any spec or code is written.
-2. **Spec Writing & Delivery Planning** — The `spec-writer` agent translates the discovery output into a numbered, traceable technical specification with a phased delivery plan, ending in a machine-readable JSON phases block.
+2. **Spec Writing & Delivery Planning** — The `spec-writer` agent translates the discovery output into a numbered, traceable technical specification with a phased delivery plan — each phase scoped to concrete files, symbols, and line anchors so less capable implementer models can execute it — ending in a machine-readable JSON phases block.
 3. **Implementation** — `/implement` executes each phase: plan → code → review → commit.
 
 ### Key Features
