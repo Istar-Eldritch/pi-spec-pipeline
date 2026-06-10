@@ -121,9 +121,6 @@ function generateFallbackMessage(context: CommitMessageContext): string {
 
 	let subject: string;
 	switch (role) {
-		case "brainstormAgent":
-			subject = `docs(${scope}): capture brainstorm session`;
-			break;
 		case "planDrafter":
 			subject = `docs(${scope}): create implementation plan`;
 			break;
@@ -196,11 +193,6 @@ function buildUserPrompt(context: CommitMessageContext): string {
 	const parts: string[] = ["Context for this commit:"];
 
 	switch (role) {
-		case "brainstormAgent":
-			parts.push(
-				"- Stage: brainstorm capture (a brainstorm document was written)",
-			);
-			break;
 		case "planDrafter":
 			parts.push(
 				`- Stage: implementation plan for phase ${phase ?? "?"}${phaseName ? ` (${phaseName})` : ""}`,
@@ -226,8 +218,8 @@ function buildUserPrompt(context: CommitMessageContext): string {
 			parts.push("- Stage: applying code-review fixes");
 			break;
 		default:
-			// Other roles (e.g. specDrafter, roadmapDrafter) reach here.
-			// The diff + files list below is enough context for the model.
+			// agentCommitMessageWriter / commitMessageWriter and any future roles
+			// reach here; the diff + files list provides enough context.
 			parts.push(`- Stage: ${role}`);
 			break;
 	}

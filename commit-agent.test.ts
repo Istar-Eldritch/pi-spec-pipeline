@@ -249,16 +249,6 @@ describe("generateCommitMessage (pi subprocess)", () => {
 			expect(result.message).toContain("chore(pipeline): unknownRole changes");
 		});
 
-		it("generates brainstormAgent fallback with doc name scope", async () => {
-			mockShouldError = true;
-			const result = await generateCommitMessage({
-				role: "brainstormAgent" as any,
-				modelConfig: { model: "claude-native/haiku", thinking: "off" },
-				files: ["docs/specs/2602171119_brainstorm_billing_redesign.md"],
-				docName: "billing redesign",
-			});
-			expect(result.message).toContain("docs(billing redesign): capture brainstorm session");
-		});
 	});
 
 	describe("phase name handling in fallback scope", () => {
