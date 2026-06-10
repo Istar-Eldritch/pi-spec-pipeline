@@ -21,7 +21,7 @@ import type { ModelConfig, RoleName } from "./types.ts";
 // ============================================
 
 export interface CommitMessageContext {
-	/** The role that performed the work (e.g., "specDrafter", "implementer") */
+	/** The role that performed the work (e.g., "implementer", "planDrafter") */
 	role: RoleName;
 	/** The model configuration that was used for the actual work */
 	modelConfig: ModelConfig;
