@@ -417,3 +417,54 @@ describe("FR-3.4: worktree and setup-script lastError must not trigger agent ret
 		}
 	});
 });
+
+// ============================================
+// Resume guard: failed worktree creation (no metadata) must not
+// fall back to running the pipeline in the main repo (FR-3.4 isolation)
+// ============================================
+
+describe("Resume guard: worktree-creation failure with no metadata", () => {
+	// Mirrors the guard predicate in the /implement-resume handler's legacy branch:
+	//   if (!state.worktree && lastError?.agent === "worktree-setup") -> block resume
+	function shouldBlockLegacyResume(state: {
+		worktree?: unknown;
+		lastError?: { agent?: string } | string;
+	}): boolean {
+		return (
+			!state.worktree &&
+			!!state.lastError &&
+			typeof state.lastError === "object" &&
+			state.lastError.agent === "worktree-setup"
+		);
+	}
+
+	it("blocks legacy resume when worktree metadata is absent after a worktree-setup failure", () => {
+		const state = {
+			worktree: undefined,
+			lastError: {
+				agent: "worktree-setup",
+				agentTask: "",
+				stderr: "git worktree add failed",
+			},
+		};
+		expect(shouldBlockLegacyResume(state)).toBe(true);
+	});
+
+	it("does not block legacy resume for a genuine legacy (no-worktree, no-error) state", () => {
+		const state = { worktree: undefined, lastError: undefined };
+		expect(shouldBlockLegacyResume(state)).toBe(false);
+	});
+
+	it("does not block legacy resume for a setup-script failure (worktree metadata exists)", () => {
+		const state = {
+			worktree: { path: "/tmp/wt", branch: "impl/x" },
+			lastError: { agent: "setup-script", agentTask: "" },
+		};
+		expect(shouldBlockLegacyResume(state)).toBe(false);
+	});
+
+	it("does not block legacy resume for a string (legacy) lastError", () => {
+		const state = { worktree: undefined, lastError: "old error string" };
+		expect(shouldBlockLegacyResume(state)).toBe(false);
+	});
+});

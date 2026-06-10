@@ -530,6 +530,26 @@ export default function (pi: ExtensionAPI) {
 
 			if (!state.worktree) {
 				// ---- Legacy branch (no worktree metadata) ----
+				// Guard: a failed worktree creation leaves no metadata. Resuming here
+				// would run the pipeline in the main repo, defeating isolation (FR-3.4).
+				// Direct the user to a fresh /implement run instead.
+				if (
+					state.lastError &&
+					typeof state.lastError === "object" &&
+					state.lastError.agent === "worktree-setup"
+				) {
+					ctx.ui.notify(
+						[
+							"Cannot resume: worktree creation failed previously, so there is no isolated worktree to resume into.",
+							`Reason: ${state.lastError.stderr}`,
+							"",
+							"Start a fresh /implement run to continue.",
+						].join("\n"),
+						"error",
+					);
+					return;
+				}
+
 				// workRoot = projectRoot; preserve the dirty-tree hard error (NFR-1)
 				workRoot = projectRoot;
 
@@ -773,20 +793,20 @@ export default function (pi: ExtensionAPI) {
 	pi.registerCommand("implement-status", {
 		description: "Show implementation status",
 		handler: async (args, ctx) => {
-			const cwd = ctx.cwd;
+			const projectRoot = resolveProjectRoot(ctx.cwd);
 			const pipelineId = (args || "").trim();
 
 			let state: ImplementationState | null;
 			if (pipelineId) {
-				state = loadImplState(cwd, pipelineId);
+				state = loadImplState(projectRoot, pipelineId);
 				if (!state) {
 					ctx.ui.notify(`Implementation not found: ${pipelineId}`, "error");
 					return;
 				}
 			} else {
-				state = getLatestActiveImplPipeline(cwd);
+				state = getLatestActiveImplPipeline(projectRoot);
 				if (!state) {
-					const states = listImplStates(cwd);
+					const states = listImplStates(projectRoot);
 					if (states.length === 0) {
 						ctx.ui.notify(
 							"No implementations found. Use /implement to start one.",
@@ -821,8 +841,8 @@ export default function (pi: ExtensionAPI) {
 	pi.registerCommand("implement-list", {
 		description: "List all implementations",
 		handler: async (_args, ctx) => {
-			const cwd = ctx.cwd;
-			const states = listImplStates(cwd);
+			const projectRoot = resolveProjectRoot(ctx.cwd);
+			const states = listImplStates(projectRoot);
 
 			if (states.length === 0) {
 				ctx.ui.notify(
@@ -876,18 +896,18 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 
-			const cwd = ctx.cwd;
+			const projectRoot = resolveProjectRoot(ctx.cwd);
 			const pipelineId = (args || "").trim();
 
 			let state: ImplementationState | null;
 			if (pipelineId) {
-				state = loadImplState(cwd, pipelineId);
+				state = loadImplState(projectRoot, pipelineId);
 				if (!state) {
 					ctx.ui.notify(`Implementation not found: ${pipelineId}`, "error");
 					return;
 				}
 			} else {
-				state = getLatestActiveImplPipeline(cwd);
+				state = getLatestActiveImplPipeline(projectRoot);
 				if (!state) {
 					ctx.ui.notify("No active implementation to cancel.", "info");
 					return;
@@ -909,7 +929,7 @@ export default function (pi: ExtensionAPI) {
 					state.stageBeforeCancellation = state.stage;
 				}
 				state.stage = "cancelled";
-				saveImplState(cwd, state);
+				saveImplState(projectRoot, state);
 
 				clearPipelineWidget(ctx);
 				if (state.worktree) {
@@ -935,17 +955,17 @@ export default function (pi: ExtensionAPI) {
 	pi.registerCommand("implement-metrics", {
 		description: "Export implementation metrics for A/B testing",
 		handler: async (args, ctx) => {
-			const cwd = ctx.cwd;
+			const projectRoot = resolveProjectRoot(ctx.cwd);
 			const pipelineId = (args || "").trim();
 
 			let statesToExport: ImplementationState[] = [];
 
 			if (pipelineId === "--all") {
-				statesToExport = listImplStates(cwd).filter(
+				statesToExport = listImplStates(projectRoot).filter(
 					(s) => s.stage === "completed" && s.metrics,
 				);
 			} else if (pipelineId) {
-				const state = loadImplState(cwd, pipelineId);
+				const state = loadImplState(projectRoot, pipelineId);
 				if (!state) {
 					ctx.ui.notify(`Implementation not found: ${pipelineId}`, "error");
 					return;
@@ -960,7 +980,7 @@ export default function (pi: ExtensionAPI) {
 					return;
 				}
 			} else {
-				const states = listImplStates(cwd);
+				const states = listImplStates(projectRoot);
 				const completed = states.filter(
 					(s) => s.stage === "completed" && s.metrics,
 				);
@@ -1082,7 +1102,7 @@ export default function (pi: ExtensionAPI) {
 			lines.push("");
 			lines.push(formatDivider(70));
 
-			const stateDir = getStateDir(cwd);
+			const stateDir = getStateDir(projectRoot);
 			if (!fs.existsSync(stateDir)) {
 				fs.mkdirSync(stateDir, { recursive: true });
 			}
