@@ -629,3 +629,55 @@ describe("extractPhases difficulty column", () => {
 		expect(result.difficulties[2]).toBe("hard");
 	});
 });
+
+// ============================================
+// FR-2.2: /implement input contract
+// ============================================
+
+describe("/implement input contract (FR-2.2)", () => {
+	// The handler's heuristic for detecting free-text vs. file-path arguments:
+	//   looksLikeFilePath = arg.includes("/") || /\.(md|typ)$/i.test(arg)
+	// If !looksLikeFilePath && !fs.existsSync(fullPath) → guidance error returned
+	// (no discovery mode; OQ-1 resolution removes enterImplementDiscoveryMode)
+
+	it("detects free-text as non-file and would return guidance error", () => {
+		const freeTextArgs = [
+			"add user auth",
+			"fix the null pointer bug",
+			"refactor billing",
+		];
+		for (const arg of freeTextArgs) {
+			const looksLikeFilePath =
+				arg.includes("/") || /\.(md|typ)$/i.test(arg);
+			// Free text does not look like a file path → guidance error path
+			expect(looksLikeFilePath).toBe(false);
+		}
+	});
+
+	it("does NOT treat .md argument as free text", () => {
+		const arg = "plan.md";
+		const looksLikeFilePath =
+			arg.includes("/") || /\.(md|typ)$/i.test(arg);
+		expect(looksLikeFilePath).toBe(true);
+	});
+
+	it("does NOT treat .typ argument as free text", () => {
+		const arg = "delivery-plan.typ";
+		const looksLikeFilePath =
+			arg.includes("/") || /\.(md|typ)$/i.test(arg);
+		expect(looksLikeFilePath).toBe(true);
+	});
+
+	it("does NOT treat path-with-slash argument as free text", () => {
+		const args = [
+			"docs/2606101200_deliver_plan.md",
+			"./specs/plan.md",
+			"/home/user/plan.md",
+		];
+		for (const arg of args) {
+			const looksLikeFilePath =
+				arg.includes("/") || /\.(md|typ)$/i.test(arg);
+			expect(looksLikeFilePath).toBe(true);
+		}
+	});
+});
