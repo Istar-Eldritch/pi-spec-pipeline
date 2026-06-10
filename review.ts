@@ -7,9 +7,7 @@ import type {
 	ReviewResult,
 	ReviewerRole,
 	ProjectConfig,
-	SpecState,
 	ImplementationState,
-	HierarchyState,
 	ModelConfig,
 	AgentCallUsage,
 	AgentOutputEvent,
@@ -23,7 +21,7 @@ import { createCheckpointAndSave, createAgentCommit } from "./git.ts";
 import { handleAgentError } from "./errors.ts";
 
 // Union type for states that have review-related fields
-type ReviewableState = SpecState | ImplementationState | HierarchyState;
+type ReviewableState = ImplementationState;
 
 // ============================================
 // Verdict Parsing

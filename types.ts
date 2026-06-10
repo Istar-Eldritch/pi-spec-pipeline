@@ -1,8 +1,7 @@
 /**
  * Type definitions for the spec pipeline
  *
- * Split into two separate state types:
- * - SpecState: For spec creation (/spec command)
+ * State type:
  * - ImplementationState: For implementation (/implement command)
  */
 
@@ -47,11 +46,6 @@ export const ModelsConfigSchema = Type.Object({
 	addressReview: Type.Optional(ModelConfigSchema),
 	// agentCommitMessageWriter for commits after agent operations (R5)
 	agentCommitMessageWriter: Type.Optional(ModelConfigSchema),
-	// Hierarchy document roles (optional, fall back to planDrafter / codeReviewer)
-	roadmapDrafter: Type.Optional(ModelConfigSchema),
-	roadmapReviewer: Type.Optional(ModelConfigSchema),
-	epicDrafter: Type.Optional(ModelConfigSchema),
-	epicReviewer: Type.Optional(ModelConfigSchema),
 	// commitMessageWriter allowed in config but silently ignore it per R5a
 	commitMessageWriter: Type.Optional(Type.Any()),
 });
@@ -82,17 +76,12 @@ export const ReviewCyclesConfigSchema = Type.Number({
 	maximum: 10,
 });
 
+// Additional properties silently ignored for backward compatibility with configs
+// that still contain removed fields (e.g. specTemplate, roadmapDrafter).
 // Full pipeline configuration schema
 export const SpecPipelineConfigSchema = Type.Object({
-	specsDir: Type.Optional(Type.String()),
 	testCommand: Type.Optional(Type.Union([Type.String(), Type.Null()])),
 	contextFiles: Type.Optional(Type.Array(Type.String())),
-	// Explicit paths to spec template and conventions files (overrides auto-discovery)
-	specTemplatePath: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-	specConventionsPath: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-	// Output format for generated specs: "md" (default) or file extension from template
-	// Auto-detected from existing specs or template format when not specified
-	specFormat: Type.Optional(Type.String()),
 	models: Type.Optional(ModelsConfigSchema),
 	tiers: Type.Optional(TiersConfigSchema),
 	escalation: Type.Optional(EscalationConfigSchema),
@@ -153,21 +142,6 @@ export interface AgentCallMetrics {
 }
 
 /**
- * Metrics for spec creation pipelines
- */
-export interface SpecMetrics {
-	pipelineStartTime: string;
-	pipelineEndTime?: string;
-	totalDurationMs?: number;
-	discoveryDurationMs?: number;
-	specDraftingDurationMs?: number;
-	agentCalls: AgentCallMetrics[];
-	specReviewCycles: number;
-	specIterations: number;
-	discoverySkipped: boolean;
-}
-
-/**
  * Metrics for implementation pipelines (for A/B testing plan generation)
  */
 export interface ImplementationMetrics {
@@ -188,38 +162,25 @@ export interface ImplementationMetrics {
 // ============================================
 
 export interface ProjectConfig {
-	specsDir: string;
 	testCommand: string | null;
 	contextFiles: string[];
 	projectContext: string;
 	/**
 	 * Stripped projectContext for read-only roles (codeReviewer).
 	 *
-	 * Why: spec template/conventions and the testing instruction are dead weight
-	 * for a code reviewer (it doesn't write specs and is told not to run tests).
-	 * Stripping them shrinks the cached prompt prefix and removes signal that
-	 * could mislead the reviewer.
+	 * Why: the testing instruction is dead weight for a code reviewer
+	 * (it doesn't run tests). Stripping it shrinks the cached prompt prefix
+	 * and removes signal that could mislead the reviewer.
 	 */
 	projectContextForReviewer: string;
 	/**
 	 * Stripped projectContext for roles that run tests but don't author specs
 	 * (implementer, addressReview).
 	 *
-	 * Why: spec template/conventions are irrelevant to a coding agent applying
-	 * a plan or fixing review feedback, but the test command line IS needed.
+	 * Why: the test command line IS needed but spec-specific content is not.
 	 * Sits between projectContextForReviewer (no test) and projectContext (full).
 	 */
 	projectContextForFixer: string;
-	// Spec template content (auto-discovered or from config)
-	specTemplate: string | null;
-	// Path to spec template file (for reference in prompts)
-	specTemplatePath: string | null;
-	// Spec conventions content (auto-discovered or from config)
-	specConventions: string | null;
-	// Path to spec conventions file (for reference in prompts)
-	specConventionsPath: string | null;
-	// Output format for generated specs (file extension without dot, e.g. "md", "typ")
-	specFormat: string;
 	// Model configurations per role
 	models: {
 		planDrafter: ModelConfig;
@@ -227,10 +188,6 @@ export interface ProjectConfig {
 		codeReviewer: ModelConfig;
 		addressReview: ModelConfig;
 		agentCommitMessageWriter: ModelConfig;
-		roadmapDrafter: ModelConfig;
-		roadmapReviewer: ModelConfig;
-		epicDrafter: ModelConfig;
-		epicReviewer: ModelConfig;
 	};
 	tiers?: TiersConfig;
 	escalation: { enabled: boolean; hardFailureRetries: number };
@@ -264,12 +221,8 @@ export type RoleName =
 	| "implementer"
 	| "codeReviewer"
 	| "addressReview"
-	| "commitMessageWriter"
-	| "brainstormAgent" // Role for tool restrictions (read-only for both old and new commit agents)
-	| "roadmapDrafter"
-	| "roadmapReviewer"
-	| "epicDrafter"
-	| "epicReviewer";
+	| "agentCommitMessageWriter"
+	| "commitMessageWriter";
 
 /** Why a role was escalated to a stronger model. */
 export type EscalationReason =
@@ -303,160 +256,6 @@ export interface ErrorDetails {
 	agentTask: string; // The exact task prompt sent to the agent
 	finishReason?: string; // Provider/model finish reason if available
 	completed?: boolean; // Whether the agent reported normal completion
-}
-
-// ============================================
-// Spec State Types
-// ============================================
-
-export type SpecStage =
-	| "discovery"
-	| "spec_drafting"
-	| "spec_review"
-	| "user_approval"
-	| "completed"
-	| "cancelled";
-
-/**
- * A single exchange in conversational discovery (user message + assistant response)
- */
-export interface ConversationalExchange {
-	userMessage: string;
-	assistantResponse: string;
-	timestamp: string;
-}
-
-/**
- * A follow-up exchange inside a single discovery topic thread.
- */
-export interface DiscoveryFollowUp {
-	/** User's follow-up question about the active topic */
-	userQuestion: string;
-	/** Discovery agent's answer to that follow-up */
-	agentAnswer: string;
-	/** ISO timestamp for when the follow-up was recorded */
-	timestamp: string;
-}
-
-/**
- * One complete or in-progress extension-driven discovery topic.
- */
-export interface DiscoveryTopic {
-	/** The original subagent assumption/question */
-	question: string;
-	/** Follow-up exchanges within this topic; empty for one-shot answers */
-	followUps: DiscoveryFollowUp[];
-	/** User's final confirmation/correction; null while the topic is open */
-	decision: string | null;
-	/** ISO timestamp for when the topic was opened */
-	timestamp: string;
-}
-
-/**
- * Discovery stage state
- */
-export interface DiscoveryState {
-	/** Whether discovery was skipped via --quick flag */
-	skipped: boolean;
-	/** Accumulated discovery summary (synthesized from conversation) */
-	discoverySummary: string;
-	/** Whether discovery is complete (user chose to proceed) */
-	completed: boolean;
-	/** Conversational discovery exchanges; kept for legacy summary paths */
-	conversationHistory?: ConversationalExchange[];
-	/** Closed topics from the extension-driven discovery loop */
-	topics?: DiscoveryTopic[];
-	/** In-progress topic thread; null when no topic is pending */
-	activeTopic?: DiscoveryTopic | null;
-}
-
-/**
- * Drafting stage state (for conversational drafting)
- */
-export interface DraftingState {
-	/** Conversation history for drafting phase */
-	conversationHistory: ConversationalExchange[];
-	/** Whether drafting is complete (user typed /spec-draft-done or /draft-done) */
-	completed: boolean;
-}
-
-/**
- * Pipeline mode for the conversational extension state machine.
- * - idle: No active conversational mode
- * - scoping: Host LLM is acting as scoping agent (for /plan command)
- * - discovery: Host LLM is acting as discovery agent
- * - drafting: Host LLM is acting as spec drafter
- */
-export type PipelineMode =
-	| "idle"
-	| "scoping"
-	| "discovery"
-	| "drafting"
-	| "brainstorm";
-
-/**
- * Ephemeral scoping state (not persisted to disk).
- * Tracks the scoping conversation during /plan to recommend a level.
- */
-export interface ScopingState {
-	/** Original description from /plan command */
-	description: string;
-	/** Whether --quick flag was passed */
-	isQuick: boolean;
-	/** Conversation history */
-	conversationHistory: ConversationalExchange[];
-	/** Recommended level parsed from agent output */
-	recommendedLevel?: HierarchyLevel;
-}
-
-/**
- * Common interface for any pipeline state that supports conversational modes.
- * Both SpecState and HierarchyState (RoadmapState, EpicState) implement this.
- */
-export interface ConversationalPipelineState {
-	id: string;
-	description: string;
-	discovery?: DiscoveryState;
-	drafting?: DraftingState;
-}
-
-/**
- * State for spec creation pipelines (/spec command)
- * Stored in .pi/spec-pipeline/specs/<id>/state.json
- */
-export interface SpecState {
-	id: string;
-	description: string;
-	stage: SpecStage;
-	createdAt: string;
-	updatedAt: string;
-
-	// Stage before cancellation (for resume)
-	stageBeforeCancellation?: SpecStage;
-
-	// Discovery state
-	discovery?: DiscoveryState;
-
-	// Drafting state (conversational mode)
-	drafting?: DraftingState;
-
-	// Spec-related state
-	specTimestamp: string; // YYMMDDhhmm format
-	specFilename: string;
-	specPath: string;
-	specDraft: string;
-	specApproved: boolean;
-	specIteration: number;
-
-	// Git state
-	checkpoints?: string[]; // Array of commit hashes
-	errorStash?: string; // Stash reference if error occurred
-
-	// Error tracking
-	lastError?: ErrorDetails | string; // string for legacy compatibility
-
-	// Metrics
-	metrics?: SpecMetrics;
 }
 
 // ============================================
@@ -599,9 +398,7 @@ export interface PipelineUIContext {
 // ============================================
 
 export const STATE_DIR = ".pi/spec-pipeline";
-export const SPEC_STATE_DIR = ".pi/spec-pipeline/specs";
 export const IMPL_STATE_DIR = ".pi/spec-pipeline/implementations";
-export const BRAINSTORM_STATE_DIR = ".pi/spec-pipeline/brainstorms";
 export const STATE_FILE = "state.json";
 export const MAX_SPEC_ITERATIONS = 5;
 export const PIPELINE_WIDGET_ID = "spec-pipeline-status";
@@ -614,173 +411,6 @@ export const READ_ONLY_ROLES = new Set([
 	"codeReviewer",
 	"commitMessageWriter",
 ]);
-
-// ============================================
-// Hierarchy Types (Roadmaps & Epics)
-// ============================================
-
-/** Document types in the hierarchy */
-export type HierarchyLevel = "roadmap" | "epic" | "feature";
-
-/** Stages for roadmap/epic pipelines */
-export type HierarchyStage =
-	| "scoping" // /plan scoping assessment
-	| "discovery"
-	| "drafting"
-	| "review"
-	| "user_approval"
-	| "approved" // Approved, children can be created
-	| "in_progress" // At least one child started
-	| "completed"
-	| "cancelled";
-
-/** A child item extracted from a roadmap/epic document */
-export interface ChildItem {
-	/** Sequential number within parent (1-indexed) */
-	number: number;
-	/** Name/title of the child item */
-	name: string;
-	/** Description of the child item */
-	description: string;
-	/** Priority: High, Medium, Low */
-	priority: "High" | "Medium" | "Low";
-	/** Dependencies as item numbers within same parent */
-	dependencies: number[];
-	/** Reference to the child pipeline once created */
-	childPipelineId?: string;
-	/** Type of child pipeline */
-	childPipelineType?: HierarchyLevel;
-	/** Status of the child (derived from child pipeline state) */
-	childStatus?: "pending" | "in_progress" | "completed" | "cancelled";
-}
-
-/** State for roadmap pipelines */
-export interface RoadmapState {
-	id: string;
-	level: "roadmap";
-	description: string;
-	stage: HierarchyStage;
-	createdAt: string;
-	updatedAt: string;
-
-	// Stage before cancellation (for resume)
-	stageBeforeCancellation?: HierarchyStage;
-
-	// Discovery state (reuses existing DiscoveryState)
-	discovery?: DiscoveryState;
-
-	// Drafting state (reuses existing DraftingState)
-	drafting?: DraftingState;
-
-	// Document details
-	docTimestamp: string; // YYMMDDhhmm format
-	docFilename: string; // e.g. "2602071200_roadmap_warm_pools.md"
-	docPath: string; // relative path to document
-	docContent: string; // current document content
-	docApproved: boolean;
-	docIteration: number;
-
-	// Child items (extracted from document after approval)
-	children: ChildItem[];
-
-	// Git state
-	checkpoints?: string[];
-	errorStash?: string;
-
-	// Error tracking
-	lastError?: ErrorDetails | string;
-
-	// Metrics (reuses SpecMetrics structure)
-	metrics?: SpecMetrics;
-}
-
-/** State for epic pipelines */
-export interface EpicState {
-	id: string;
-	level: "epic";
-	description: string;
-	stage: HierarchyStage;
-	createdAt: string;
-	updatedAt: string;
-
-	// Stage before cancellation (for resume)
-	stageBeforeCancellation?: HierarchyStage;
-
-	// Parent reference (optional — epic can be standalone)
-	parentId?: string;
-	parentType?: "roadmap";
-
-	// Discovery state
-	discovery?: DiscoveryState;
-
-	// Drafting state
-	drafting?: DraftingState;
-
-	// Document details
-	docTimestamp: string;
-	docFilename: string;
-	docPath: string;
-	docContent: string;
-	docApproved: boolean;
-	docIteration: number;
-
-	// Child items (features extracted from document after approval)
-	children: ChildItem[];
-
-	// Git state
-	checkpoints?: string[];
-	errorStash?: string;
-
-	// Error tracking
-	lastError?: ErrorDetails | string;
-
-	// Metrics
-	metrics?: SpecMetrics;
-}
-
-/** Union type for any hierarchy state */
-export type HierarchyState = RoadmapState | EpicState;
-
-/** State directories for hierarchy types */
-export const ROADMAP_STATE_DIR = ".pi/spec-pipeline/roadmaps";
-export const EPIC_STATE_DIR = ".pi/spec-pipeline/epics";
-
-// ============================================
-// Brainstorm Types
-// ============================================
-
-/** Stages for brainstorm pipelines */
-export type BrainstormStage = "brainstorming" | "completed" | "cancelled";
-
-/**
- * State for brainstorm pipelines (/brainstorm command)
- * Stored in .pi/spec-pipeline/brainstorms/<id>.json
- */
-export interface BrainstormState {
-	id: string;
-	description: string;
-	stage: BrainstormStage;
-	createdAt: string;
-	updatedAt: string;
-
-	// Stage before cancellation (for potential future resume)
-	stageBeforeCancellation?: BrainstormStage;
-
-	// Document details
-	docTimestamp: string; // YYMMDDhhmm format
-	docFilename: string; // e.g. "2602171119_brainstorm_billing_redesign.md"
-	docPath: string; // relative path to document
-	docContent: string; // written at completion
-
-	// Conversation history
-	conversationHistory: ConversationalExchange[];
-
-	// Git state
-	checkpoints?: string[];
-
-	// Error tracking
-	lastError?: string;
-}
 
 // ============================================
 // Agent Progress Event Types

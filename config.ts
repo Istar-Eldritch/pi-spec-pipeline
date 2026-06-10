@@ -4,7 +4,6 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 import { Value } from "@sinclair/typebox/value";
 import type { Static } from "@sinclair/typebox";
 import {
@@ -35,10 +34,6 @@ export const DEFAULT_MODEL_CONFIGS: Record<string, ModelConfig> = {
 	codeReviewer: { model: "gpt-5.4", thinking: "medium" }, // Review code changes
 	addressReview: { model: "gpt-5.4", thinking: "medium" }, // Fix application — issues already identified by reviewer
 	agentCommitMessageWriter: { model: "gpt-5.4-mini", thinking: "off" }, // Fast, cheap commit message generation (R5)
-	roadmapDrafter: { model: "gpt-5.5", thinking: "high" }, // Roadmap documents (same as planDrafter)
-	roadmapReviewer: { model: "gpt-5.4", thinking: "medium" }, // Review roadmap docs
-	epicDrafter: { model: "gpt-5.5", thinking: "high" }, // Epic documents (same as planDrafter)
-	epicReviewer: { model: "gpt-5.4", thinking: "medium" }, // Review epic docs
 } as const;
 
 /** Default code review cycle count. Set to 0 to skip code review. */
@@ -55,10 +50,6 @@ export const ROLE_TIERS: Record<string, TierName> = {
 	codeReviewer: "strong",
 	addressReview: "mid",
 	agentCommitMessageWriter: "cheap",
-	roadmapDrafter: "strong",
-	roadmapReviewer: "strong",
-	epicDrafter: "strong",
-	epicReviewer: "strong",
 };
 
 export const DEFAULT_ESCALATION = {
@@ -162,8 +153,6 @@ export function getEscalatedModelConfig(
 	let key: string;
 	if (role === "commitMessageWriter") {
 		key = "agentCommitMessageWriter";
-	} else if (role === "brainstormAgent") {
-		return undefined;
 	} else {
 		key = role;
 	}
@@ -249,26 +238,6 @@ function mergeWithDefaults(
 			userModels?.agentCommitMessageWriter ??
 			userTiers?.[ROLE_TIERS.agentCommitMessageWriter] ??
 			DEFAULT_MODEL_CONFIGS.agentCommitMessageWriter,
-		roadmapDrafter:
-			userModels?.roadmapDrafter ??
-			userModels?.planDrafter ??
-			userTiers?.[ROLE_TIERS.roadmapDrafter] ??
-			DEFAULT_MODEL_CONFIGS.roadmapDrafter,
-		roadmapReviewer:
-			userModels?.roadmapReviewer ??
-			userModels?.codeReviewer ??
-			userTiers?.[ROLE_TIERS.roadmapReviewer] ??
-			DEFAULT_MODEL_CONFIGS.roadmapReviewer,
-		epicDrafter:
-			userModels?.epicDrafter ??
-			userModels?.planDrafter ??
-			userTiers?.[ROLE_TIERS.epicDrafter] ??
-			DEFAULT_MODEL_CONFIGS.epicDrafter,
-		epicReviewer:
-			userModels?.epicReviewer ??
-			userModels?.codeReviewer ??
-			userTiers?.[ROLE_TIERS.epicReviewer] ??
-			DEFAULT_MODEL_CONFIGS.epicReviewer,
 	};
 
 	// Apply project-level streamIdleTimeoutMs as fallback when per-role isn't set.
@@ -293,247 +262,6 @@ function mergeWithDefaults(
 // Configuration Loading
 // ============================================
 
-// ============================================
-// Spec Template & Conventions Discovery
-// ============================================
-
-/** File extensions we can read as text-based templates */
-const READABLE_EXTENSIONS = new Set([".md", ".typ", ".txt", ".rst", ".adoc"]);
-
-/**
- * Try to read a file if it exists and has a readable text extension.
- * Returns the content or null.
- */
-function readTextFile(filePath: string): string | null {
-	try {
-		if (!fs.existsSync(filePath)) return null;
-		const ext = path.extname(filePath).toLowerCase();
-		if (!READABLE_EXTENSIONS.has(ext)) return null;
-		const content = fs.readFileSync(filePath, "utf-8");
-		return content.trim().length > 0 ? content : null;
-	} catch {
-		return null;
-	}
-}
-
-/**
- * Search a directory for files matching patterns.
- * Returns relative paths from cwd.
- */
-function findFilesMatching(dir: string, patterns: RegExp[]): string[] {
-	const results: string[] = [];
-	try {
-		if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) return results;
-		const entries = fs.readdirSync(dir);
-		for (const entry of entries) {
-			const fullPath = path.join(dir, entry);
-			const stat = fs.statSync(fullPath);
-			if (!stat.isFile()) continue;
-			for (const pattern of patterns) {
-				if (pattern.test(entry)) {
-					results.push(fullPath);
-					break;
-				}
-			}
-		}
-	} catch {
-		/* ignore */
-	}
-	return results;
-}
-
-/**
- * Discover spec template file in the project.
- *
- * Priority:
- * 1. Explicit path from config (specTemplatePath)
- * 2. Files matching *TEMPLATE* or *template* in specs directory / common locations
- * 3. Built-in fallback template shipped with the extension
- *
- * Returns { path, content, builtin } or { path: null, content: null }.
- * `builtin: true` means the caller should surface a one-time hint telling the
- * user how to customise it.
- */
-export function discoverSpecTemplate(
-	cwd: string,
-	specsDir: string,
-	explicitPath?: string | null,
-): { path: string | null; content: string | null; builtin?: boolean } {
-	// 1. Explicit path from config
-	if (explicitPath) {
-		const fullPath = path.isAbsolute(explicitPath)
-			? explicitPath
-			: path.join(cwd, explicitPath);
-		const content = readTextFile(fullPath);
-		if (content) {
-			return { path: explicitPath, content };
-		}
-	}
-
-	// Null means explicitly disabled
-	if (explicitPath === null) {
-		return { path: null, content: null };
-	}
-
-	// 2. Search in specs directory
-	const templatePatterns = [/template/i];
-
-	const searchDirs = [
-		path.join(cwd, specsDir),
-		path.join(cwd, "docs"),
-		path.join(cwd, "specs"),
-	];
-
-	// Deduplicate directories
-	const seen = new Set<string>();
-	for (const dir of searchDirs) {
-		const resolved = path.resolve(dir);
-		if (seen.has(resolved)) continue;
-		seen.add(resolved);
-
-		const matches = findFilesMatching(dir, templatePatterns);
-		// Prefer files with TEMPLATE in the name (case-insensitive)
-		// Filter out _template.typ (the Typst layout file) - we want the spec template
-		const templateFiles = matches.filter((f) => {
-			const basename = path.basename(f).toLowerCase();
-			// Must have "template" in the name
-			if (!basename.includes("template")) return false;
-			// Skip binary files
-			const ext = path.extname(f).toLowerCase();
-			if (!READABLE_EXTENSIONS.has(ext)) return false;
-			// Skip layout template files (prefixed with underscore, no date prefix)
-			// These are Typst layout files, not spec templates
-			if (basename.startsWith("_")) return false;
-			// Skip example files
-			if (basename.includes("example")) return false;
-			return true;
-		});
-
-		if (templateFiles.length > 0) {
-			// Pick the first match (sorted for determinism)
-			templateFiles.sort();
-			const templatePath = templateFiles[0];
-			const content = readTextFile(templatePath);
-			if (content) {
-				const relativePath = path.relative(cwd, templatePath);
-				return { path: relativePath, content };
-			}
-		}
-	}
-
-	// 3. Built-in fallback shipped with the extension
-	const builtinPath = path.join(
-		path.dirname(fileURLToPath(import.meta.url)),
-		"templates",
-		"spec-template.md",
-	);
-	const builtinContent = readTextFile(builtinPath);
-	if (builtinContent) {
-		return {
-			path: "<built-in spec template>",
-			content: builtinContent,
-			builtin: true,
-		};
-	}
-
-	return { path: null, content: null };
-}
-
-/**
- * Discover spec conventions/guide file in the project.
- *
- * Priority:
- * 1. Explicit path from config (specConventionsPath)
- * 2. Files matching *guide*spec* or *spec*convention* in specs directory
- * 3. Files matching similar patterns in common locations
- *
- * Returns { path, content } or { path: null, content: null }
- */
-export function discoverSpecConventions(
-	cwd: string,
-	specsDir: string,
-	explicitPath?: string | null,
-): { path: string | null; content: string | null } {
-	// 1. Explicit path from config
-	if (explicitPath) {
-		const fullPath = path.isAbsolute(explicitPath)
-			? explicitPath
-			: path.join(cwd, explicitPath);
-		const content = readTextFile(fullPath);
-		if (content) {
-			return { path: explicitPath, content };
-		}
-	}
-
-	// Null means explicitly disabled
-	if (explicitPath === null) {
-		return { path: null, content: null };
-	}
-
-	// 2. Search for convention files
-	const conventionPatterns = [
-		/guide.*spec/i,
-		/spec.*guide/i,
-		/spec.*convention/i,
-		/convention.*spec/i,
-		/writing.*spec/i,
-		/spec.*standard/i,
-	];
-
-	const searchDirs = [
-		path.join(cwd, specsDir),
-		path.join(cwd, "docs"),
-		path.join(cwd, "specs"),
-	];
-
-	const seen = new Set<string>();
-	for (const dir of searchDirs) {
-		const resolved = path.resolve(dir);
-		if (seen.has(resolved)) continue;
-		seen.add(resolved);
-
-		const matches = findFilesMatching(dir, conventionPatterns);
-		const conventionFiles = matches.filter((f) => {
-			const ext = path.extname(f).toLowerCase();
-			return READABLE_EXTENSIONS.has(ext);
-		});
-
-		if (conventionFiles.length > 0) {
-			conventionFiles.sort();
-			const conventionPath = conventionFiles[0];
-			const content = readTextFile(conventionPath);
-			if (content) {
-				const relativePath = path.relative(cwd, conventionPath);
-				return { path: relativePath, content };
-			}
-		}
-	}
-
-	return { path: null, content: null };
-}
-
-/**
- * Detect the spec output format.
- *
- * Priority:
- * 1. Explicit format from config
- * 2. Extension of the discovered template file
- * 3. Default to "md"
- */
-export function detectSpecFormat(
-	explicitFormat?: string,
-	templatePath?: string | null,
-): string {
-	if (explicitFormat) {
-		return explicitFormat.replace(/^\./, "");
-	}
-	if (templatePath) {
-		const ext = path.extname(templatePath).toLowerCase().replace(/^\./, "");
-		if (ext) return ext;
-	}
-	return "md";
-}
-
 /**
  * Configuration loading result
  */
@@ -555,20 +283,6 @@ function buildProjectConfig(
 	cwd: string,
 	config: Static<typeof SpecPipelineConfigSchema>,
 ): ProjectConfig {
-	// Detect specs directory (existing logic)
-	let specsDir = config.specsDir;
-	if (!specsDir) {
-		if (fs.existsSync(path.join(cwd, "docs", "specs"))) {
-			specsDir = "docs/specs";
-		} else if (fs.existsSync(path.join(cwd, "docs"))) {
-			specsDir = "docs";
-		} else if (fs.existsSync(path.join(cwd, "specs"))) {
-			specsDir = "specs";
-		} else {
-			specsDir = "docs";
-		}
-	}
-
 	// Detect test command (existing logic)
 	let testCommand = config.testCommand ?? null;
 	if (!testCommand) {
@@ -648,46 +362,15 @@ function buildProjectConfig(
 	}
 
 	// Snapshot the docs-only context before appending sections that don't apply
-	// to read-only review roles (testing instructions, spec template/conventions).
+	// to read-only review roles (testing instructions).
 	const projectContextForReviewer = projectContext;
 
 	if (testCommand) {
 		projectContext += `\n## Testing\n\nYou MUST run tests with: \`${testCommand}\`\n`;
 	}
 
-	// Snapshot for roles that run tests but don't author specs (implementer,
-	// addressReview). Includes the test command, excludes spec template/conventions.
+	// Snapshot for roles that run tests (implementer, addressReview).
 	const projectContextForFixer = projectContext;
-
-	// Discover spec template, conventions, and output format
-	const template = discoverSpecTemplate(cwd, specsDir, config.specTemplatePath);
-	if (template.builtin) {
-		console.log(
-			`ℹ️  spec-pipeline: using built-in spec template. Drop a *template*.md under \`${specsDir}/\` (or set \`specTemplatePath\` in .pi/spec-pipeline.json) to customise.`,
-		);
-	}
-	const conventions = discoverSpecConventions(
-		cwd,
-		specsDir,
-		config.specConventionsPath,
-	);
-	const specFormat = detectSpecFormat(config.specFormat, template.path);
-
-	if (template.content) {
-		const truncatedTemplate =
-			template.content.length > 8000
-				? template.content.slice(0, 8000) + "\n\n[... truncated ...]"
-				: template.content;
-		projectContext += `\n## Spec Template (from ${template.path})\n\nUse this template as the basis for new specifications:\n\n\`\`\`\n${truncatedTemplate}\n\`\`\`\n`;
-	}
-
-	if (conventions.content) {
-		const truncatedConventions =
-			conventions.content.length > 8000
-				? conventions.content.slice(0, 8000) + "\n\n[... truncated ...]"
-				: conventions.content;
-		projectContext += `\n## Spec Conventions (from ${conventions.path})\n\nFollow these conventions when writing specs:\n\n\`\`\`\n${truncatedConventions}\n\`\`\`\n`;
-	}
 
 	// Merge model configs with defaults (R3, R5)
 	// Note: commitMessageWriter in config.models is silently ignored (R5a)
@@ -702,17 +385,11 @@ function buildProjectConfig(
 	const skipPlanGeneration = config.skipPlanGeneration ?? false;
 
 	return {
-		specsDir,
 		testCommand,
 		contextFiles: foundFiles,
 		projectContext,
 		projectContextForReviewer,
 		projectContextForFixer,
-		specTemplate: template.content,
-		specTemplatePath: template.path,
-		specConventions: conventions.content,
-		specConventionsPath: conventions.path,
-		specFormat,
 		models,
 		tiers: config.tiers,
 		escalation: normalizeEscalation(config.escalation),
@@ -753,6 +430,9 @@ function resolveMainRepoFromWorktree(cwd: string): string | null {
 /**
  * Load and validate pipeline configuration
  * Returns error if config is corrupt or invalid (R4)
+ *
+ * Unknown/removed fields in the JSON (e.g. specTemplate, roadmapDrafter) are
+ * silently ignored — TypeBox does not reject additional properties by default.
  */
 export function loadPipelineConfig(cwd: string): ConfigLoadResult {
 	const configPath = path.join(cwd, ".pi", "spec-pipeline.json");

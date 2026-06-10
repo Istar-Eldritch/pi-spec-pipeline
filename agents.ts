@@ -15,10 +15,9 @@ import type {
 	ToolEventData,
 	PipelineUIContext,
 	ImplementationState,
-	SpecState,
 } from "./types.ts";
 import { READ_ONLY_ROLES, WRITE_ROLES } from "./types.ts";
-import { updateImplWidget, updateSpecWidget } from "./formatting.ts";
+import { updateImplWidget } from "./formatting.ts";
 
 // ============================================
 // Progress Display Constants
@@ -74,9 +73,9 @@ const DEFAULT_TOOL_EMOJI = "🔧";
  */
 export function createProgressCallback(
 	ctx: PipelineUIContext,
-	state: ImplementationState | SpecState,
+	state: ImplementationState,
 	phaseInfo: string,
-	isImplPipeline: boolean = true,
+	_isImplPipeline: boolean = true,
 ): (event: AgentOutputEvent) => void {
 	return (event: AgentOutputEvent) => {
 		// Handle legacy text deltas (ignore for progress display)
@@ -131,15 +130,7 @@ export function createProgressCallback(
 				const contextualMessage = `${message} [${phaseInfo}]`;
 
 				// Update widget with current action (R13, R14, R15)
-				if (isImplPipeline) {
-					updateImplWidget(
-						ctx,
-						state as ImplementationState,
-						contextualMessage,
-					);
-				} else {
-					updateSpecWidget(ctx, state as SpecState, contextualMessage);
-				}
+				updateImplWidget(ctx, state, contextualMessage);
 
 				// Notify UI and print to terminal for permanent history
 				ctx.ui.notify(contextualMessage, "info");

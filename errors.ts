@@ -10,14 +10,12 @@ import type {
 	AgentName,
 	RoleName,
 	AgentResult,
-	SpecState,
 	ImplementationState,
-	HierarchyState,
 } from "./types.ts";
 import { getStateDir } from "./state.ts";
 
 // Union type for states that have error-related fields
-type ErrorableState = SpecState | ImplementationState | HierarchyState;
+type ErrorableState = ImplementationState;
 import { stashChanges } from "./git.ts";
 import { formatBox, formatKeyValue, formatDivider } from "./formatting.ts";
 

@@ -3,18 +3,14 @@
  */
 
 import type {
-	SpecStage,
 	ImplementationStage,
-	HierarchyStage,
-	SpecState,
 	ImplementationState,
-	RoadmapState,
-	EpicState,
 	ModelConfig,
 	ProjectConfig,
 	WidgetUIContext,
+	ErrorDetails,
 } from "./types.ts";
-import { PIPELINE_WIDGET_ID, MAX_SPEC_ITERATIONS } from "./types.ts";
+import { PIPELINE_WIDGET_ID } from "./types.ts";
 import { getErrorEmoji, getErrorSuggestion } from "./errors.ts";
 
 // ============================================
@@ -175,18 +171,6 @@ export function formatEffectiveConfig(
 	lines.push(
 		`    agentCommitMessageWriter: ${formatModelConfig(config.models.agentCommitMessageWriter)}`,
 	);
-	lines.push(
-		`    roadmapDrafter    : ${formatModelConfig(config.models.roadmapDrafter)}`,
-	);
-	lines.push(
-		`    roadmapReviewer   : ${formatModelConfig(config.models.roadmapReviewer)}`,
-	);
-	lines.push(
-		`    epicDrafter       : ${formatModelConfig(config.models.epicDrafter)}`,
-	);
-	lines.push(
-		`    epicReviewer      : ${formatModelConfig(config.models.epicReviewer)}`,
-	);
 	lines.push("");
 
 	// Review cycles
@@ -195,18 +179,6 @@ export function formatEffectiveConfig(
 		`    codeReviewer: ${config.reviewCycles === 0 ? "skipped" : config.reviewCycles}`,
 	);
 	lines.push("");
-
-	// Spec template & conventions
-	if (config.specTemplatePath || config.specConventionsPath) {
-		lines.push("  Spec Templates:");
-		if (config.specTemplatePath) {
-			lines.push(`    template     : ${config.specTemplatePath}`);
-		}
-		if (config.specConventionsPath) {
-			lines.push(`    conventions  : ${config.specConventionsPath}`);
-		}
-		lines.push("");
-	}
 
 	lines.push(formatDivider(60));
 
@@ -218,45 +190,12 @@ export function formatEffectiveConfig(
 // ============================================
 
 /**
- * Format spec stage for display
- */
-export function formatSpecStage(stage: SpecStage): string {
-	const stageNames: Record<SpecStage, string> = {
-		discovery: "🔍 Discovery",
-		spec_drafting: "📝 Spec Drafting",
-		spec_review: "🔍 Spec Review",
-		user_approval: "👤 Awaiting User Approval",
-		completed: "✅ Completed",
-		cancelled: "❌ Cancelled",
-	};
-	return stageNames[stage] || stage;
-}
-
-/**
  * Format implementation stage for display
  */
 export function formatImplStage(stage: ImplementationStage): string {
 	const stageNames: Record<ImplementationStage, string> = {
 		plan_generation: "📋 Plan Generation",
 		implementation: "🚀 Implementation",
-		completed: "✅ Completed",
-		cancelled: "❌ Cancelled",
-	};
-	return stageNames[stage] || stage;
-}
-
-/**
- * Format hierarchy stage (roadmap/epic) for display
- */
-export function formatHierarchyStage(stage: HierarchyStage): string {
-	const stageNames: Record<HierarchyStage, string> = {
-		scoping: "🔎 Scoping",
-		discovery: "🔍 Discovery",
-		drafting: "📝 Drafting",
-		review: "🔍 Review",
-		user_approval: "👤 Awaiting Approval",
-		approved: "✅ Approved",
-		in_progress: "🚀 In Progress",
 		completed: "✅ Completed",
 		cancelled: "❌ Cancelled",
 	};
@@ -336,109 +275,6 @@ export function formatAgentSummary(
 	lines.push("─── Output Summary ───");
 	lines.push(summarizeAgentOutput(output));
 	lines.push("─── End Summary ───");
-	return lines.join("\n");
-}
-
-// ============================================
-// Spec State Formatting
-// ============================================
-
-/**
- * Format spec state for display
- */
-export function formatSpecState(state: SpecState): string {
-	const lines: string[] = [];
-
-	// Header section
-	lines.push(formatDivider(50));
-	lines.push(`  Spec: ${state.id || "unknown"}`);
-	lines.push(formatDivider(50));
-	lines.push("");
-
-	// Basic info section
-	lines.push("📋 Basic Information");
-	const description = state.description || "(no description)";
-	lines.push(
-		formatKeyValue(
-			"  Description",
-			description.slice(0, 50) + (description.length > 50 ? "..." : ""),
-		),
-	);
-	lines.push(formatKeyValue("  Stage", formatSpecStage(state.stage)));
-	lines.push(formatKeyValue("  Created", state.createdAt));
-	lines.push(formatKeyValue("  Updated", state.updatedAt));
-	lines.push(formatKeyValue("  Spec", state.specFilename));
-
-	// Git section
-	if ((state.checkpoints && state.checkpoints.length > 0) || state.errorStash) {
-		lines.push("");
-		lines.push("📦 Git");
-		if (state.checkpoints && state.checkpoints.length > 0) {
-			lines.push(formatKeyValue("  Commits", String(state.checkpoints.length)));
-		}
-		if (state.errorStash) {
-			lines.push(
-				formatKeyValue(
-					"  Error Stash",
-					state.errorStash + " (will be dropped on resume)",
-				),
-			);
-		}
-	}
-
-	// Discovery progress section
-	if (state.discovery) {
-		const exchanges = state.discovery.conversationHistory || [];
-		lines.push("");
-		lines.push("🔍 Discovery");
-		if (state.discovery.skipped) {
-			lines.push("  Skipped (--quick mode)");
-		} else if (state.stage === "discovery") {
-			lines.push(formatKeyValue("  Exchanges", String(exchanges.length)));
-			lines.push("  In progress...");
-		} else if (state.discovery.completed && exchanges.length > 0) {
-			lines.push(
-				formatKeyValue("  Status", `Completed (${exchanges.length} exchanges)`),
-			);
-			const summaryLength = state.discovery.discoverySummary?.length || 0;
-			if (summaryLength > 0) {
-				lines.push(
-					formatKeyValue("  Summary", `${Math.round(summaryLength / 1000)}KB`),
-				);
-			}
-		} else if (state.discovery.completed) {
-			lines.push("  Completed (no exchanges)");
-		}
-	}
-
-	// Spec progress section
-	if (
-		state.stage === "spec_drafting" ||
-		state.stage === "spec_review" ||
-		state.stage === "user_approval"
-	) {
-		lines.push("");
-		lines.push("📝 Spec Progress");
-		lines.push(
-			formatKeyValue(
-				"  Iteration",
-				`${state.specIteration}/${MAX_SPEC_ITERATIONS}`,
-			),
-		);
-		lines.push(
-			formatKeyValue("  Approved", state.specApproved ? "Yes ✅" : "No"),
-		);
-	}
-
-	// Error section
-	if (state.lastError) {
-		lines.push("");
-		formatErrorSection(lines, state.lastError);
-	}
-
-	lines.push("");
-	lines.push(formatDivider(50));
-
 	return lines.join("\n");
 }
 
@@ -549,171 +385,15 @@ export function formatImplState(state: ImplementationState): string {
 		lines.push(`Escalations: ${state.escalations.length}`);
 		for (const esc of state.escalations) {
 			const cycleStr = esc.cycle !== undefined ? ` cycle ${esc.cycle}` : "";
-			lines.push(`  ⬆️ phase ${esc.phase}${cycleStr}: ${esc.role} ${esc.fromModel} → ${esc.toModel} (${esc.reason})`);
-		}
-	}
-
-	lines.push("");
-	lines.push(formatDivider(50));
-
-	return lines.join("\n");
-}
-
-// ============================================
-// Hierarchy State Formatting
-// ============================================
-
-/**
- * Format roadmap state for display
- */
-export function formatRoadmapState(state: RoadmapState): string {
-	const lines: string[] = [];
-
-	lines.push(formatDivider(50));
-	lines.push(`  Roadmap: ${state.id || "unknown"}`);
-	lines.push(formatDivider(50));
-	lines.push("");
-
-	lines.push("📋 Basic Information");
-	const description = state.description || "(no description)";
-	lines.push(
-		formatKeyValue(
-			"  Description",
-			description.slice(0, 50) + (description.length > 50 ? "..." : ""),
-		),
-	);
-	lines.push(formatKeyValue("  Stage", formatHierarchyStage(state.stage)));
-	lines.push(formatKeyValue("  Created", state.createdAt));
-	lines.push(formatKeyValue("  Updated", state.updatedAt));
-	lines.push(formatKeyValue("  Document", state.docFilename));
-
-	if (state.children.length > 0) {
-		lines.push("");
-		lines.push("📦 Child Epics");
-		const completed = state.children.filter(
-			(c) => c.childStatus === "completed",
-		).length;
-		const inProgress = state.children.filter(
-			(c) => c.childStatus === "in_progress",
-		).length;
-		const pending = state.children.filter(
-			(c) => !c.childStatus || c.childStatus === "pending",
-		).length;
-		lines.push(formatKeyValue("  Total", String(state.children.length)));
-		lines.push(
-			formatKeyValue(
-				"  Progress",
-				`${completed} done, ${inProgress} active, ${pending} pending`,
-			),
-		);
-		lines.push("");
-		for (const child of state.children) {
-			const statusIcon =
-				child.childStatus === "completed"
-					? "✅"
-					: child.childStatus === "in_progress"
-						? "🔄"
-						: child.childStatus === "cancelled"
-							? "🚫"
-							: "⬜";
-			const deps =
-				child.dependencies.length > 0
-					? ` (deps: ${child.dependencies.join(", ")})`
-					: "";
 			lines.push(
-				`  ${statusIcon} ${child.number}. ${child.name} [${child.priority}]${deps}`,
+				`  ⬆️ phase ${esc.phase}${cycleStr}: ${esc.role} ${esc.fromModel} → ${esc.toModel} (${esc.reason})`,
 			);
 		}
 	}
 
-	if (state.lastError) {
-		lines.push("");
-		formatErrorSection(lines, state.lastError);
-	}
-
 	lines.push("");
 	lines.push(formatDivider(50));
-	return lines.join("\n");
-}
 
-/**
- * Format epic state for display
- */
-export function formatEpicState(state: EpicState): string {
-	const lines: string[] = [];
-
-	lines.push(formatDivider(50));
-	lines.push(`  Epic: ${state.id || "unknown"}`);
-	lines.push(formatDivider(50));
-	lines.push("");
-
-	lines.push("📋 Basic Information");
-	const description = state.description || "(no description)";
-	lines.push(
-		formatKeyValue(
-			"  Description",
-			description.slice(0, 50) + (description.length > 50 ? "..." : ""),
-		),
-	);
-	lines.push(formatKeyValue("  Stage", formatHierarchyStage(state.stage)));
-	lines.push(formatKeyValue("  Created", state.createdAt));
-	lines.push(formatKeyValue("  Updated", state.updatedAt));
-	lines.push(formatKeyValue("  Document", state.docFilename));
-	if (state.parentId) {
-		lines.push(
-			formatKeyValue(
-				"  Parent",
-				`${state.parentType || "roadmap"}:${state.parentId}`,
-			),
-		);
-	}
-
-	if (state.children.length > 0) {
-		lines.push("");
-		lines.push("📦 Child Features");
-		const completed = state.children.filter(
-			(c) => c.childStatus === "completed",
-		).length;
-		const inProgress = state.children.filter(
-			(c) => c.childStatus === "in_progress",
-		).length;
-		const pending = state.children.filter(
-			(c) => !c.childStatus || c.childStatus === "pending",
-		).length;
-		lines.push(formatKeyValue("  Total", String(state.children.length)));
-		lines.push(
-			formatKeyValue(
-				"  Progress",
-				`${completed} done, ${inProgress} active, ${pending} pending`,
-			),
-		);
-		lines.push("");
-		for (const child of state.children) {
-			const statusIcon =
-				child.childStatus === "completed"
-					? "✅"
-					: child.childStatus === "in_progress"
-						? "🔄"
-						: child.childStatus === "cancelled"
-							? "🚫"
-							: "⬜";
-			const deps =
-				child.dependencies.length > 0
-					? ` (deps: ${child.dependencies.join(", ")})`
-					: "";
-			lines.push(
-				`  ${statusIcon} ${child.number}. ${child.name} [${child.priority}]${deps}`,
-			);
-		}
-	}
-
-	if (state.lastError) {
-		lines.push("");
-		formatErrorSection(lines, state.lastError);
-	}
-
-	lines.push("");
-	lines.push(formatDivider(50));
 	return lines.join("\n");
 }
 
@@ -722,7 +402,7 @@ export function formatEpicState(state: EpicState): string {
  */
 function formatErrorSection(
 	lines: string[],
-	lastError: SpecState["lastError"],
+	lastError: ErrorDetails | string | undefined,
 ): void {
 	if (typeof lastError === "string") {
 		lines.push("❌ Last Error (Legacy)");
@@ -774,43 +454,6 @@ function formatErrorSection(
 // ============================================
 // Widget Management
 // ============================================
-
-/**
- * Update the persistent pipeline status widget for spec creation
- */
-export function updateSpecWidget(
-	ctx: WidgetUIContext,
-	state: SpecState,
-	currentAction?: string,
-): void {
-	const lines: string[] = [];
-
-	// Header
-	const stateId = state.id || "unknown";
-	lines.push(`📋 Spec: ${stateId.slice(0, 16)}...`);
-	lines.push(formatDivider(40));
-
-	// Stage indicator
-	lines.push(`Stage: ${formatSpecStage(state.stage)}`);
-
-	// Discovery progress if in discovery
-	if (
-		state.discovery &&
-		state.stage === "discovery" &&
-		!state.discovery.completed
-	) {
-		const exchanges = state.discovery.conversationHistory?.length ?? 0;
-		lines.push(`Discovery: ${exchanges} exchanges`);
-	}
-
-	// Current action
-	if (currentAction) {
-		lines.push(formatDivider(40));
-		lines.push(`⏳ ${currentAction}`);
-	}
-
-	ctx.ui.setWidget(PIPELINE_WIDGET_ID, lines);
-}
 
 /**
  * Update the persistent pipeline status widget for implementation
