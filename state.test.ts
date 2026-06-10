@@ -13,6 +13,8 @@ import * as os from "node:os";
 import {
 	generatePipelineId,
 	loadImplState,
+	saveImplState,
+	createInitialImplState,
 	getImplStateDir,
 	getImplStatePath,
 } from "./state.ts";
@@ -101,5 +103,144 @@ describe("loadImplState escalations migration", () => {
 		const loaded = loadImplState(tmpDir, "impl-migration-test");
 		expect(loaded).not.toBeNull();
 		expect(loaded!.escalations).toEqual([]);
+	});
+});
+
+// ============================================
+// Worktree metadata round-trip (FR-7.4)
+// ============================================
+
+describe("worktree metadata state round-trip", () => {
+	let tmpDir: string;
+
+	beforeEach(() => {
+		tmpDir = fs.mkdtempSync(
+			path.join(os.tmpdir(), "impl-state-worktree-test-"),
+		);
+	});
+
+	afterEach(() => {
+		fs.rmSync(tmpDir, { recursive: true, force: true });
+	});
+
+	it("state.worktree round-trips through saveImplState / loadImplState", () => {
+		const state = createInitialImplState(
+			"specs/test.md",
+			"# Test",
+			"2606101200",
+		);
+
+		const worktreeMeta = {
+			path: "/tmp/worktrees/test-2606101200",
+			branch: "impl/test-2606101200",
+			baseCommit: "abc123def456",
+			createdAt: new Date().toISOString(),
+			setupScriptRan: false,
+		};
+		state.worktree = worktreeMeta;
+
+		saveImplState(tmpDir, state);
+
+		// Reload and assert all five metadata keys are present
+		const loaded = loadImplState(tmpDir, state.id);
+		expect(loaded).not.toBeNull();
+		expect(loaded!.worktree).toBeDefined();
+		expect(loaded!.worktree!.path).toBe(worktreeMeta.path);
+		expect(loaded!.worktree!.branch).toBe(worktreeMeta.branch);
+		expect(loaded!.worktree!.baseCommit).toBe(worktreeMeta.baseCommit);
+		expect(loaded!.worktree!.createdAt).toBe(worktreeMeta.createdAt);
+		expect(loaded!.worktree!.setupScriptRan).toBe(false);
+	});
+
+	it("state.worktree.setupScriptRan = true round-trips correctly", () => {
+		const state = createInitialImplState(
+			"specs/test.md",
+			"# Test",
+			"2606101200",
+		);
+		state.worktree = {
+			path: "/tmp/worktrees/test-2606101200",
+			branch: "impl/test-2606101200",
+			baseCommit: "abc123def456",
+			createdAt: new Date().toISOString(),
+			setupScriptRan: true,
+		};
+		saveImplState(tmpDir, state);
+
+		const loaded = loadImplState(tmpDir, state.id);
+		expect(loaded!.worktree!.setupScriptRan).toBe(true);
+	});
+
+	it("legacy state without worktree field loads with state.worktree === undefined (FR-5.2)", () => {
+		// Write a raw state file that lacks the worktree field (legacy format)
+		const stateDir = getImplStateDir(tmpDir);
+		fs.mkdirSync(stateDir, { recursive: true });
+
+		const legacyState = {
+			id: "legacy-no-worktree",
+			implTimestamp: "2601010000",
+			specPath: "specs/old.md",
+			specContent: "# Old spec",
+			stage: "implementation",
+			createdAt: new Date().toISOString(),
+			updatedAt: new Date().toISOString(),
+			phases: [],
+			phasesGenerated: [],
+			currentPhaseIndex: 0,
+			currentReviewCycle: 1,
+			previousReview: "",
+			phaseCommits: [],
+			escalations: [],
+			checkpoints: [],
+			reviewCyclesCompleted: 0,
+			// NOTE: no 'worktree' field
+		};
+
+		const statePath = getImplStatePath(tmpDir, "legacy-no-worktree");
+		const originalJson = JSON.stringify(legacyState, null, 2);
+		fs.writeFileSync(statePath, originalJson, "utf-8");
+
+		const loaded = loadImplState(tmpDir, "legacy-no-worktree");
+		expect(loaded).not.toBeNull();
+		expect(loaded!.worktree).toBeUndefined();
+
+		// Assert the file on disk is NOT rewritten to add a worktree field
+		// (needsSave must not be triggered for the absent worktree field)
+		const diskJson = fs.readFileSync(statePath, "utf-8");
+		const diskParsed = JSON.parse(diskJson);
+		expect(diskParsed).not.toHaveProperty("worktree");
+	});
+
+	it("disk JSON written by saveImplState contains all five worktree metadata keys", () => {
+		const state = createInitialImplState(
+			"specs/test.md",
+			"# Test",
+			"2606101200",
+		);
+		const createdAt = new Date().toISOString();
+		state.worktree = {
+			path: "/tmp/wt/myfeature-2606101200",
+			branch: "impl/myfeature-2606101200",
+			baseCommit: "deadbeef",
+			createdAt,
+			setupScriptRan: false,
+		};
+		saveImplState(tmpDir, state);
+
+		const diskJson = fs.readFileSync(
+			getImplStatePath(tmpDir, state.id),
+			"utf-8",
+		);
+		const diskParsed = JSON.parse(diskJson);
+		expect(diskParsed.worktree).toBeDefined();
+		expect(Object.keys(diskParsed.worktree)).toEqual(
+			expect.arrayContaining([
+				"path",
+				"branch",
+				"baseCommit",
+				"createdAt",
+				"setupScriptRan",
+			]),
+		);
 	});
 });

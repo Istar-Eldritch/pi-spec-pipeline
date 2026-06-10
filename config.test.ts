@@ -8,6 +8,7 @@ import {
 	DEFAULT_MODEL_CONFIGS,
 	DEFAULT_REVIEW_CYCLES,
 	DEFAULT_ESCALATION,
+	DEFAULT_WORKTREE_BASE_PATH,
 	loadPipelineConfig,
 	getEscalatedModelConfig,
 } from "./config.ts";
@@ -453,5 +454,133 @@ describe("escalation config normalization", () => {
 	it("DEFAULT_ESCALATION has enabled: true and hardFailureRetries: 1", () => {
 		expect(DEFAULT_ESCALATION.enabled).toBe(true);
 		expect(DEFAULT_ESCALATION.hardFailureRetries).toBe(1);
+	});
+});
+
+// ============================================
+// Worktree config (FR-7.3)
+// ============================================
+
+describe("worktree config schema validation", () => {
+	it("accepts a valid worktree section", () => {
+		expect(
+			validateConfig({
+				worktree: { basePath: ".pi/worktrees", setupScript: "npm install" },
+			}),
+		).toEqual([]);
+	});
+
+	it("accepts worktree with only basePath", () => {
+		expect(validateConfig({ worktree: { basePath: "custom/path" } })).toEqual(
+			[],
+		);
+	});
+
+	it("accepts worktree with only setupScript", () => {
+		expect(validateConfig({ worktree: { setupScript: "./setup.sh" } })).toEqual(
+			[],
+		);
+	});
+
+	it("accepts config without worktree key (backward compat, FR-1.5)", () => {
+		expect(validateConfig({})).toEqual([]);
+		expect(validateConfig({ testCommand: "bun test" })).toEqual([]);
+	});
+
+	it("rejects basePath: 42 (wrong type) with error naming /worktree/basePath", () => {
+		const errors = validateConfig({ worktree: { basePath: 42 } });
+		expect(errors.length).toBeGreaterThan(0);
+		const paths = errors.map((e) => e.path).join(" ");
+		expect(paths).toContain("/worktree/basePath");
+	});
+
+	it("rejects basePath: '' (empty string, violates minLength 1)", () => {
+		const errors = validateConfig({ worktree: { basePath: "" } });
+		expect(errors.length).toBeGreaterThan(0);
+	});
+
+	it("rejects setupScript: '' (empty string, violates minLength 1)", () => {
+		const errors = validateConfig({ worktree: { setupScript: "" } });
+		expect(errors.length).toBeGreaterThan(0);
+	});
+});
+
+describe("worktree config normalization", () => {
+	let tmpDir: string;
+
+	beforeEach(() => {
+		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "config-worktree-test-"));
+		fs.mkdirSync(path.join(tmpDir, ".pi"), { recursive: true });
+	});
+
+	afterEach(() => {
+		fs.rmSync(tmpDir, { recursive: true, force: true });
+	});
+
+	function writeConfig(config: object): void {
+		fs.writeFileSync(
+			path.join(tmpDir, ".pi", "spec-pipeline.json"),
+			JSON.stringify(config),
+			"utf-8",
+		);
+	}
+
+	function loadConfig(): ProjectConfig {
+		const result = loadPipelineConfig(tmpDir);
+		if (!result.success) throw new Error((result as any).error);
+		return (result as any).config;
+	}
+
+	it("absent worktree key → basePath defaults to DEFAULT_WORKTREE_BASE_PATH", () => {
+		writeConfig({});
+		const config = loadConfig();
+		expect(config.worktree.basePath).toBe(DEFAULT_WORKTREE_BASE_PATH);
+		expect(config.worktree.setupScript).toBeUndefined();
+	});
+
+	it("explicit basePath is preserved", () => {
+		writeConfig({ worktree: { basePath: "/tmp/my-worktrees" } });
+		const config = loadConfig();
+		expect(config.worktree.basePath).toBe("/tmp/my-worktrees");
+	});
+
+	it("explicit setupScript is preserved (trimmed)", () => {
+		writeConfig({ worktree: { setupScript: "  ./scripts/setup.sh  " } });
+		const config = loadConfig();
+		expect(config.worktree.setupScript).toBe("./scripts/setup.sh");
+	});
+
+	it("whitespace-only setupScript is normalized to absent (FR-1.2)", () => {
+		writeConfig({ worktree: { setupScript: "   " } });
+		// Note: the schema rejects empty strings (minLength 1) but whitespace-only
+		// passes schema validation; normalization in buildProjectConfig removes it.
+		// However, \"   \" has length 3, so it passes schema but gets trimmed to absent.
+		const config = loadConfig();
+		expect(config.worktree.setupScript).toBeUndefined();
+	});
+
+	it("configs without worktree key load with worktree defaults (NFR-2)", () => {
+		// Simulate a config that was written before this feature existed
+		writeConfig({ testCommand: "bun test", reviewCycles: 1 });
+		const config = loadConfig();
+		expect(config.worktree).toBeDefined();
+		expect(config.worktree.basePath).toBe(DEFAULT_WORKTREE_BASE_PATH);
+		expect(config.worktree.setupScript).toBeUndefined();
+		// Ensure other fields are unaffected
+		expect(config.testCommand).toBe("bun test");
+		expect(config.reviewCycles).toBe(1);
+	});
+
+	it("no-config-file path also gets default worktree settings", () => {
+		// No .pi/spec-pipeline.json — uses defaults including usingDefaultModels
+		const result = loadPipelineConfig(tmpDir);
+		if (!result.success) throw new Error((result as any).error);
+		const config = (result as any).config as ProjectConfig;
+		expect(config.worktree.basePath).toBe(DEFAULT_WORKTREE_BASE_PATH);
+		expect(config.worktree.setupScript).toBeUndefined();
+	});
+
+	it("DEFAULT_WORKTREE_BASE_PATH is '.pi/worktrees'", () => {
+		expect(DEFAULT_WORKTREE_BASE_PATH).toBe(".pi/worktrees");
 	});
 });

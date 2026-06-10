@@ -76,6 +76,21 @@ export const ReviewCyclesConfigSchema = Type.Number({
 	maximum: 10,
 });
 
+// ============================================
+// Worktree Configuration Schema
+// ============================================
+
+export const WorktreeConfigSchema = Type.Object({
+	// Where implementation worktrees are created. Relative paths resolve
+	// against the main repo root. Default: ".pi/worktrees".
+	basePath: Type.Optional(Type.String({ minLength: 1 })),
+	// Optional shell command run after worktree creation, before the pipeline
+	// starts (cwd = the new worktree). Non-zero exit aborts the run.
+	setupScript: Type.Optional(Type.String({ minLength: 1 })),
+});
+
+export type WorktreeConfig = Static<typeof WorktreeConfigSchema>;
+
 // Additional properties silently ignored for backward compatibility with configs
 // that still contain removed fields (e.g. specTemplate, roadmapDrafter).
 // Full pipeline configuration schema
@@ -91,6 +106,8 @@ export const SpecPipelineConfigSchema = Type.Object({
 	// Project-level default for the streaming idle-timeout watchdog (ms). 0 disables.
 	// Per-role values in `models.<role>.streamIdleTimeoutMs` take precedence.
 	streamIdleTimeoutMs: Type.Optional(Type.Number({ minimum: 0 })),
+	// Worktree isolation settings for /implement runs.
+	worktree: Type.Optional(WorktreeConfigSchema),
 });
 
 // ============================================
@@ -200,6 +217,11 @@ export interface ProjectConfig {
 	// True when models were not configured and the pipeline is falling back to
 	// the user's current/default model (omitting --model/--thinking on subagent calls).
 	usingDefaultModels?: boolean;
+	// Normalized worktree settings. Always present; basePath defaults to ".pi/worktrees".
+	worktree: {
+		basePath: string; // never empty; relative paths resolved against projectRoot at use time
+		setupScript?: string; // absent when not configured or whitespace-only
+	};
 }
 
 // ============================================
@@ -320,6 +342,15 @@ export interface ImplementationState {
 
 	// Flags
 	skipPlanGeneration?: boolean;
+
+	// Worktree isolation metadata (FR-5.1). Absent on legacy states.
+	worktree?: {
+		path: string; // absolute worktree path
+		branch: string; // e.g. "impl/myfeature-2606101218"
+		baseCommit: string; // commit the branch was created from
+		createdAt: string; // ISO timestamp
+		setupScriptRan: boolean; // false until FR-3 succeeds (or no script)
+	};
 
 	// Metrics
 	metrics?: ImplementationMetrics;

@@ -39,6 +39,9 @@ export const DEFAULT_MODEL_CONFIGS: Record<string, ModelConfig> = {
 /** Default code review cycle count. Set to 0 to skip code review. */
 export const DEFAULT_REVIEW_CYCLES: NormalizedReviewCycles = 2;
 
+/** Default base path for git worktrees used by /implement (relative to the project root). */
+export const DEFAULT_WORKTREE_BASE_PATH = ".pi/worktrees";
+
 /**
  * Which tier each role belongs to by default. The plan and the review are the
  * leverage points (strong); implementation/fixes are well-constrained (mid);
@@ -384,6 +387,14 @@ function buildProjectConfig(
 	// Skip plan generation (experimental A/B testing)
 	const skipPlanGeneration = config.skipPlanGeneration ?? false;
 
+	// Normalize worktree config (FR-1.2).
+	// setupScript is absent when missing, null, or whitespace-only.
+	const rawSetupScript = config.worktree?.setupScript;
+	const normalizedSetupScript =
+		typeof rawSetupScript === "string" && rawSetupScript.trim().length > 0
+			? rawSetupScript.trim()
+			: undefined;
+
 	return {
 		testCommand,
 		contextFiles: foundFiles,
@@ -396,6 +407,12 @@ function buildProjectConfig(
 		reviewCycles,
 		skipPlanGeneration,
 		streamIdleTimeoutMs: config.streamIdleTimeoutMs,
+		worktree: {
+			basePath: config.worktree?.basePath ?? DEFAULT_WORKTREE_BASE_PATH,
+			...(normalizedSetupScript !== undefined
+				? { setupScript: normalizedSetupScript }
+				: {}),
+		},
 	};
 }
 
@@ -404,7 +421,7 @@ function buildProjectConfig(
  * Git worktrees have a `.git` file (not directory) containing `gitdir: <path>`.
  * Returns the main repo root or null if not a worktree.
  */
-function resolveMainRepoFromWorktree(cwd: string): string | null {
+export function resolveMainRepoFromWorktree(cwd: string): string | null {
 	const gitFile = path.join(cwd, ".git");
 	try {
 		const stat = fs.statSync(gitFile);
