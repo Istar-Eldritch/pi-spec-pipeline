@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "bun:test";
 import { EventEmitter } from "node:events";
-import { generateCommitMessage, extractPhaseName, extractDocName } from "./commit-agent.ts";
+import {
+	generateCommitMessage,
+	extractPhaseName,
+	extractDocName,
+} from "./commit-agent.ts";
 import type { CommitMessageContext } from "./commit-agent.ts";
 
 // Mock state shared with the spawn mock below.
@@ -24,7 +28,9 @@ vi.mock("node:child_process", () => ({
 		proc.stdout = new EventEmitter();
 		proc.stderr = new EventEmitter();
 		proc.killed = false;
-		proc.kill = () => { proc.killed = true; };
+		proc.kill = () => {
+			proc.killed = true;
+		};
 
 		if (mockShouldError) {
 			setImmediate(() => proc.emit("error", new Error("spawn ENOENT")));
@@ -60,7 +66,8 @@ beforeEach(() => {
 describe("generateCommitMessage (pi subprocess)", () => {
 	describe("successful generation", () => {
 		it("returns the model output when it's a valid conventional commit", async () => {
-			mockOutput = "docs(phase-1): add implementation plan for user authentication";
+			mockOutput =
+				"docs(phase-1): add implementation plan for user authentication";
 
 			const context: CommitMessageContext = {
 				role: "planDrafter",
@@ -71,7 +78,9 @@ describe("generateCommitMessage (pi subprocess)", () => {
 
 			const result = await generateCommitMessage(context);
 			expect(result.type).toBe("success");
-			expect(result.message).toBe("docs(phase-1): add implementation plan for user authentication");
+			expect(result.message).toBe(
+				"docs(phase-1): add implementation plan for user authentication",
+			);
 		});
 
 		it("strips an outer fenced code block", async () => {
@@ -86,11 +95,14 @@ describe("generateCommitMessage (pi subprocess)", () => {
 
 			const result = await generateCommitMessage(context);
 			expect(result.type).toBe("success");
-			expect(result.message).toBe("feat(phase-2): add user authentication endpoints");
+			expect(result.message).toBe(
+				"feat(phase-2): add user authentication endpoints",
+			);
 		});
 
 		it("preserves a multi-line body", async () => {
-			mockOutput = "feat(phase-1): add auth middleware\n\n- wires session management into the request pipeline\n- validates JWT signatures before downstream handlers run";
+			mockOutput =
+				"feat(phase-1): add auth middleware\n\n- wires session management into the request pipeline\n- validates JWT signatures before downstream handlers run";
 
 			const context: CommitMessageContext = {
 				role: "implementer",
@@ -107,7 +119,8 @@ describe("generateCommitMessage (pi subprocess)", () => {
 		});
 
 		it("strips common preambles like 'Here is the commit message:'", async () => {
-			mockOutput = "Here is the commit message:\nfeat(jobs): add bulk download endpoint";
+			mockOutput =
+				"Here is the commit message:\nfeat(jobs): add bulk download endpoint";
 
 			const context: CommitMessageContext = {
 				role: "implementer",
@@ -145,7 +158,9 @@ describe("generateCommitMessage (pi subprocess)", () => {
 				files: ["docs/plan.md"],
 			});
 			expect(result.type).toBe("fallback");
-			expect(result.message).toContain("docs(pipeline): create implementation plan");
+			expect(result.message).toContain(
+				"docs(pipeline): create implementation plan",
+			);
 		});
 
 		it("falls back when the subprocess errors out", async () => {
@@ -158,7 +173,9 @@ describe("generateCommitMessage (pi subprocess)", () => {
 				phase: 2,
 			});
 			expect(result.type).toBe("fallback");
-			expect(result.message).toContain("feat(phase-2): implement phase changes");
+			expect(result.message).toContain(
+				"feat(phase-2): implement phase changes",
+			);
 		});
 
 		it("falls back on non-zero exit code", async () => {
@@ -173,7 +190,9 @@ describe("generateCommitMessage (pi subprocess)", () => {
 				cycle: 2,
 			});
 			expect(result.type).toBe("fallback");
-			expect(result.message).toContain("fix(phase-1): address review feedback (cycle 2)");
+			expect(result.message).toContain(
+				"fix(phase-1): address review feedback (cycle 2)",
+			);
 		});
 
 		it("falls back on empty output", async () => {
@@ -186,7 +205,9 @@ describe("generateCommitMessage (pi subprocess)", () => {
 				phase: 1,
 			});
 			expect(result.type).toBe("fallback");
-			expect(result.message).toContain("feat(phase-1): implement phase changes");
+			expect(result.message).toContain(
+				"feat(phase-1): implement phase changes",
+			);
 			expect(result.message).toContain("- src/a.ts");
 			expect(result.message).toContain("- src/b.ts");
 			expect(result.message).toContain("- tests/a.test.ts");
@@ -202,7 +223,9 @@ describe("generateCommitMessage (pi subprocess)", () => {
 				files: ["docs/plan.md"],
 				phase: 3,
 			});
-			expect(result.message).toContain("docs(phase-3): create implementation plan");
+			expect(result.message).toContain(
+				"docs(phase-3): create implementation plan",
+			);
 		});
 
 		it("generates implementer fallback", async () => {
@@ -213,7 +236,9 @@ describe("generateCommitMessage (pi subprocess)", () => {
 				files: ["src/code.ts"],
 				phase: 2,
 			});
-			expect(result.message).toContain("feat(phase-2): implement phase changes");
+			expect(result.message).toContain(
+				"feat(phase-2): implement phase changes",
+			);
 		});
 
 		it("generates addressReview fallback with cycle", async () => {
@@ -225,7 +250,9 @@ describe("generateCommitMessage (pi subprocess)", () => {
 				phase: 1,
 				cycle: 3,
 			});
-			expect(result.message).toContain("fix(phase-1): address review feedback (cycle 3)");
+			expect(result.message).toContain(
+				"fix(phase-1): address review feedback (cycle 3)",
+			);
 		});
 
 		it("generates codeReviewer fallback", async () => {
@@ -236,7 +263,9 @@ describe("generateCommitMessage (pi subprocess)", () => {
 				files: ["src/code.ts"],
 				phase: 1,
 			});
-			expect(result.message).toContain("refactor(phase-1): apply code review changes");
+			expect(result.message).toContain(
+				"refactor(phase-1): apply code review changes",
+			);
 		});
 
 		it("generates chore fallback for unknown roles", async () => {
@@ -248,7 +277,6 @@ describe("generateCommitMessage (pi subprocess)", () => {
 			});
 			expect(result.message).toContain("chore(pipeline): unknownRole changes");
 		});
-
 	});
 
 	describe("phase name handling in fallback scope", () => {
@@ -261,7 +289,9 @@ describe("generateCommitMessage (pi subprocess)", () => {
 				phase: 1,
 				phaseName: "backend api",
 			});
-			expect(result.message).toContain("feat(phase-1/backend api): implement phase changes");
+			expect(result.message).toContain(
+				"feat(phase-1/backend api): implement phase changes",
+			);
 		});
 
 		it("drops overly long phase names rather than truncating with '...'", async () => {
@@ -274,20 +304,30 @@ describe("generateCommitMessage (pi subprocess)", () => {
 				phaseName: "frontend renamefilemodalhtm bunch of stuff",
 			});
 			// No "..." truncation — just use the phase number.
-			expect(result.message).toContain("feat(phase-3): implement phase changes");
+			expect(result.message).toContain(
+				"feat(phase-3): implement phase changes",
+			);
 			expect(result.message).not.toContain("...");
 		});
 	});
 
 	describe("phase name extraction", () => {
 		it("extracts phase name from a phase path", () => {
-			expect(extractPhaseName("20250209_myproject/phase1_backend_api.md")).toBe("backend api");
-			expect(extractPhaseName("20250209_myproject/phase2_frontend_components.md")).toBe("frontend components");
-			expect(extractPhaseName("specs/phase10_database_migrations.md")).toBe("database migrations");
+			expect(extractPhaseName("20250209_myproject/phase1_backend_api.md")).toBe(
+				"backend api",
+			);
+			expect(
+				extractPhaseName("20250209_myproject/phase2_frontend_components.md"),
+			).toBe("frontend components");
+			expect(extractPhaseName("specs/phase10_database_migrations.md")).toBe(
+				"database migrations",
+			);
 		});
 
 		it("handles underscore-separated names", () => {
-			expect(extractPhaseName("20250209_project/phase1_user_auth_system.md")).toBe("user auth system");
+			expect(
+				extractPhaseName("20250209_project/phase1_user_auth_system.md"),
+			).toBe("user auth system");
 		});
 
 		it("returns undefined for invalid paths", () => {
@@ -304,11 +344,15 @@ describe("generateCommitMessage (pi subprocess)", () => {
 		});
 
 		it("extracts doc name from roadmap filename", () => {
-			expect(extractDocName("2602071200_roadmap_warm_pools.md")).toBe("warm pools");
+			expect(extractDocName("2602071200_roadmap_warm_pools.md")).toBe(
+				"warm pools",
+			);
 		});
 
 		it("extracts doc name from epic filename", () => {
-			expect(extractDocName("2602071200_epic_payment_system.md")).toBe("payment system");
+			expect(extractDocName("2602071200_epic_payment_system.md")).toBe(
+				"payment system",
+			);
 		});
 
 		it("handles .typ extension", () => {
@@ -316,7 +360,9 @@ describe("generateCommitMessage (pi subprocess)", () => {
 		});
 
 		it("extracts name from brainstorm filename", () => {
-			expect(extractDocName("2602171000_brainstorm_billing_redesign.md")).toBe("billing redesign");
+			expect(extractDocName("2602171000_brainstorm_billing_redesign.md")).toBe(
+				"billing redesign",
+			);
 		});
 
 		it("returns undefined for invalid filenames", () => {
