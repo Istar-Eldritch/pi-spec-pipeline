@@ -81,16 +81,32 @@ For each phase, the pipeline:
 ### Git Workflow
 
 ```
-main
- └─ spec/2602101200-auth-system-impl-2602101215  [Implementation branch]
+main  (your checkout — untouched during the run)
+ │
+ └─ impl/<shortName>-<timestamp>  [Isolated worktree branch]
      ├─ Phase 1 commit: Database schema
      ├─ Phase 2 commit: Authentication service
      └─ Phase 3 commit: Integration tests
 ```
 
-**Requires clean tree.** Implementation uses destructive git operations (`git add -A`,
-`git reset --hard`) during error recovery, so a clean working tree is required at
-`/implement` invocation.
+Every `/implement` run creates a dedicated `git worktree` on a new
+`impl/<shortName>-<timestamp>` branch forked from your current `HEAD`. All
+code changes, commits, and error-recovery operations happen _inside_ that
+worktree — your main checkout is never modified.
+
+**Dirty tree is fine at `/implement` time.** Uncommitted changes in the
+triggering checkout will not be included (only the committed HEAD is the
+worktree base). The pipeline warns you and then proceeds.
+
+**Manual cleanup.** The worktree and branch are kept after the run so you
+can inspect, test, and merge at your own pace. The completion message shows
+the exact commands:
+
+```bash
+# After reviewing and merging
+git worktree remove .pi/worktrees/<shortName>-<timestamp>
+git branch -d impl/<shortName>-<timestamp>
+```
 
 ### Error Recovery
 
@@ -128,6 +144,8 @@ config files are silently ignored for backward compatibility.
 | `contextFiles` | string[] | `[]` | Additional files to include as context |
 | `reviewCycles` | number | `3` | Code review cycles per phase (`0` = skip review) |
 | `skipPlanGeneration` | boolean | `false` | Skip plan generation (equivalent to `--no-plan`) |
+| `worktree.basePath` | string | `.pi/worktrees` | Directory where implementation worktrees are created. Relative paths resolve against the project root. |
+| `worktree.setupScript` | string | — | Optional shell script run after worktree creation and before the pipeline starts (`cwd` = the new worktree). Non-zero exit aborts the run. |
 
 ### Model Configuration
 
@@ -196,6 +214,56 @@ Escalation triggers:
 
 Every escalation is appended as a JSONL line to `.pi/spec-pipeline/escalations.log`.
 
+### Worktree Configuration
+
+Every `/implement` run is isolated in a dedicated git worktree. Two optional
+settings control this behaviour:
+
+```json
+{
+  "worktree": {
+    "basePath": ".pi/worktrees",
+    "setupScript": "cd $PI_MAIN_REPO && npm ci && cp .env.example $PI_WORKTREE_PATH/.env"
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `basePath` | `.pi/worktrees` | Parent directory for all worktrees created by this project. Relative paths resolve against the project root; absolute paths are used as-is. Cannot be the project root itself or inside `.git`. |
+| `setupScript` | (none) | Shell command (`bash -c`) run in the new worktree before the pipeline starts. Use it to install dependencies, copy secrets, or run any per-worktree setup. |
+
+#### Setup Script Environment Variables
+
+| Variable | Value |
+|----------|-------|
+| `PI_WORKTREE_PATH` | Absolute path to the new worktree |
+| `PI_WORKTREE_BRANCH` | Branch name, e.g. `impl/myfeature-2606101218` |
+| `PI_MAIN_REPO` | Absolute path to the main repo root |
+| `PI_IMPL_ID` | Implementation pipeline ID |
+
+A non-zero exit code aborts the run and leaves the worktree in place for
+debugging. `/implement-resume` re-runs the setup script automatically if it
+did not complete successfully.
+
+#### Worktree Lifecycle
+
+```
+/implement         → worktree created at .pi/worktrees/<shortName>-<ts>
+                     branch impl/<shortName>-<ts> forked from HEAD
+(pipeline runs)    → commits land on impl/ branch only
+/implement-resume  → re-attaches or recreates the worktree
+                     (re-runs setup script if it never completed)
+(pipeline done)    → worktree and branch kept for manual review
+
+# Cleanup after merge (manual, v1)
+git worktree remove .pi/worktrees/<shortName>-<ts>
+git branch -d impl/<shortName>-<ts>
+```
+
+The `.pi/worktrees/` directory itself is protected by an auto-generated
+`.gitignore` (`*`) so worktree directories are never accidentally tracked.
+
 ## State Management
 
 Pipeline state is stored in `.pi/spec-pipeline/`:
@@ -244,6 +312,7 @@ bun test --coverage
 
 - **index.ts** — Extension entry point, command registration
 - **implement-pipeline.ts** — Phase-by-phase implementation execution
+- **worktree.ts** — Git worktree creation, setup-script runner, and resume helpers
 - **review.ts** — Code review loop
 - **git.ts** — Git operations and error recovery
 - **config.ts** — Configuration loading and validation
@@ -254,5 +323,5 @@ bun test --coverage
 
 ## Related Documentation
 
-- [DIRTY_TREE_SUPPORT.md](./DIRTY_TREE_SUPPORT.md) — Git clean-tree requirements
+- [DIRTY_TREE_SUPPORT.md](./DIRTY_TREE_SUPPORT.md) — Dirty-tree support and worktree isolation details
 - [specs/implement_optimizations.md](./specs/implement_optimizations.md) — Plan generation experiments

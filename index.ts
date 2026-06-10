@@ -4,7 +4,11 @@
  * IMPLEMENTATION (/implement):
  *   1. Accepts a delivery-plan file produced by the delivery-plan-architect agent.
  *   2. Parses the phase table (| Phase | Focus | Effort | Difficulty? |).
- *   3. For each phase: plan → implement → code review → commit.
+ *   3. Creates an isolated git worktree on a new impl/<shortName>-<ts> branch
+ *      forked from the triggering checkout's HEAD.
+ *   4. For each phase (inside the worktree): plan → implement → code review → commit.
+ *   5. All commits, stash ops, and error-recovery resets happen in the worktree;
+ *      the triggering checkout is never modified.
  *
  * Usage:
  *   /implement [--no-plan] [--no-review] [--auto] <delivery-plan.md>
@@ -13,6 +17,10 @@
  *   /implement-list        # List all implementations with status
  *   /implement-cancel      # Cancel current implementation
  *   /implement-metrics [id] # Export metrics JSON
+ *
+ * Worktree roots:
+ *   projectRoot — main repo root: state files, logs, config
+ *   workRoot    — the worktree: agent cwd, all git mutations, test execution
  *
  * Configuration:
  *   Create .pi/spec-pipeline.json in your project root.
