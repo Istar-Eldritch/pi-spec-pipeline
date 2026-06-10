@@ -77,19 +77,8 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 // Import types
 import type {
-	SpecState,
 	ImplementationState,
-	RoadmapState,
-	EpicState,
-	HierarchyState,
-	HierarchyLevel,
-	ConversationalExchange,
-	DiscoveryTopic,
 	ProjectConfig,
-	PipelineMode,
-	ScopingState,
-	ConversationalPipelineState,
-	BrainstormState,
 	RoleName,
 } from "./types.ts";
 
@@ -98,38 +87,16 @@ import { loadPipelineConfig, getEscalatedModelConfig } from "./config.ts";
 
 // Import state management
 import {
-	loadSpecState,
-	saveSpecState,
-	listSpecStates,
-	getLatestActiveSpecPipeline,
 	loadImplState,
 	saveImplState,
 	listImplStates,
 	getLatestActiveImplPipeline,
-	loadRoadmapState,
-	saveRoadmapState,
-	listRoadmapStates,
-	getLatestActiveRoadmapPipeline,
-	loadEpicState,
-	saveEpicState,
-	listEpicStates,
-	getLatestActiveEpicPipeline,
-	loadBrainstormState,
-	saveBrainstormState,
-	listBrainstormStates,
-	getLatestActiveBrainstormPipeline,
-	createInitialBrainstormState,
-	createInitialRoadmapState,
-	createInitialEpicState,
+	createInitialImplState,
 	generateTimestamp,
 	generatePipelineId,
-	createInitialSpecState,
-	createInitialImplState,
 	getStateDir,
-	getSpecStateDir,
 	getImplStateDir,
 	getSessionLogDir,
-	generateConversationalDiscoverySummary,
 } from "./state.ts";
 
 // Import git operations
@@ -154,16 +121,10 @@ import {
 import {
 	formatStepBanner,
 	formatEffectiveConfig,
-	formatSpecStage,
 	formatImplStage,
-	formatHierarchyStage,
-	formatSpecState,
 	formatImplState,
-	formatRoadmapState,
-	formatEpicState,
 	formatDivider,
 	formatKeyValue,
-	updateSpecWidget,
 	updateImplWidget,
 	clearPipelineWidget,
 } from "./formatting.ts";
@@ -176,9 +137,7 @@ import { recordEscalation } from "./escalation.ts";
 import { runAgentWithConfig } from "./agents.ts";
 
 // Import pipelines
-import { runSpecPipeline } from "./spec-pipeline.ts";
 import { runImplementPipeline, extractPhases } from "./implement-pipeline.ts";
-import { runHierarchyPipeline } from "./hierarchy-pipeline.ts";
 
 // Import system prompts
 import { createSystemPrompts, buildPromptOptions } from "./agents-config.ts";
