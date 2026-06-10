@@ -387,9 +387,7 @@ describe("FR-3.4: worktree and setup-script lastError must not trigger agent ret
 	});
 
 	it("persisted worktree-setup failure state has falsy agentTask after save/load round-trip", () => {
-		const tempDir = fs.mkdtempSync(
-			path.join(os.tmpdir(), "fr34-regression-"),
-		);
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "fr34-regression-"));
 		try {
 			const state = createInitialImplState(
 				"docs/specs/test.md",
