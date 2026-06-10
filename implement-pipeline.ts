@@ -43,6 +43,25 @@ import { getEscalatedModelConfig } from "./config.ts";
 import { createSystemPrompts, buildPromptOptions } from "./agents-config.ts";
 
 // ============================================
+// Pipeline Roots
+// ============================================
+
+/**
+ * The two roots a pipeline run operates against.
+ *
+ * - `projectRoot`: main repo root — state files, session logs, review logs,
+ *   escalation log, error log, metrics, config loading.
+ * - `workRoot`: the worktree — agent subprocess cwd, all git mutations
+ *   (add/commit/stash/reset/clean), test execution, modified-file detection.
+ *
+ * In legacy mode (no worktree) both are equal to the triggering `ctx.cwd`.
+ */
+export interface PipelineRoots {
+	projectRoot: string;
+	workRoot: string;
+}
+
+// ============================================
 // Phase Name Helpers
 // ============================================
 
@@ -343,14 +362,14 @@ export function extractPhases(
  */
 export async function runImplementPipeline(
 	state: ImplementationState,
-	cwd: string,
+	roots: PipelineRoots,
 	projectConfig: ProjectConfig,
 	ctx: PipelineUIContext,
 ): Promise<void> {
 	const SYSTEM_PROMPTS = createSystemPrompts(buildPromptOptions(projectConfig));
 
-	// Helper to save state
-	const save = () => saveImplState(cwd, state);
+	// Helper to save state (always in the main repo)
+	const save = () => saveImplState(roots.projectRoot, state);
 
 	// Create temporary directory for spec and plan files
 	const pipelineTmpDir = fs.mkdtempSync(
@@ -374,7 +393,7 @@ export async function runImplementPipeline(
 	try {
 		return await _runImplementPipelineInner(
 			state,
-			cwd,
+			roots,
 			projectConfig,
 			ctx,
 			plansTmpDir,
@@ -391,7 +410,7 @@ export async function runImplementPipeline(
 /** Inner implementation — separated so we can wrap with try/finally for temp file cleanup */
 async function _runImplementPipelineInner(
 	state: ImplementationState,
-	cwd: string,
+	roots: PipelineRoots,
 	projectConfig: ProjectConfig,
 	ctx: PipelineUIContext,
 	plansTmpDir: string,
@@ -400,7 +419,8 @@ async function _runImplementPipelineInner(
 	specTmpPath: string,
 	specFileRef: string,
 ): Promise<void> {
-	const sessionDir = getSessionLogDir(cwd, state.id);
+	const { projectRoot, workRoot } = roots;
+	const sessionDir = getSessionLogDir(projectRoot, state.id);
 
 	// Initialize or restore metrics
 	if (!state.metrics) {
@@ -587,7 +607,7 @@ capture it and save it for the implementer. Do NOT call write/edit tools.`;
 				maxEscalatedRetries: projectConfig.escalation.hardFailureRetries,
 				role: "planDrafter",
 				task: planTask,
-				cwd,
+				cwd: workRoot,
 				systemPrompt: SYSTEM_PROMPTS.planDrafter,
 				onOutput: planProgressCallback, // ← Pass callback (R17)
 				sessionDir,
@@ -611,7 +631,7 @@ capture it and save it for the implementer. Do NOT call write/edit tools.`;
 				},
 				onEscalate: ({ fromModel, toModel }) => {
 					recordEscalation(
-						cwd,
+						projectRoot,
 						state,
 						{
 							role: "planDrafter",
@@ -635,7 +655,8 @@ capture it and save it for the implementer. Do NOT call write/edit tools.`;
 					planDraftResult.completed !== false &&
 					!planDraftResult.limitHit;
 				await handleAgentError(
-					cwd,
+					projectRoot,
+					workRoot,
 					state,
 					validateOnly
 						? {
@@ -737,7 +758,7 @@ ${specFileRef}`;
 			if (phaseDifficulty === "hard" && implementerEscalated) {
 				if (!alreadyRouted) {
 					recordEscalation(
-						cwd,
+						projectRoot,
 						state,
 						{
 							role: "implementer",
@@ -803,12 +824,12 @@ Address all issues raised in the review.`;
 				maxEscalatedRetries: projectConfig.escalation.hardFailureRetries,
 				role: "implementer",
 				task: implementTask,
-				cwd,
+				cwd: workRoot,
 				systemPrompt: SYSTEM_PROMPTS.implementer,
 				onOutput: implProgressCallback, // ← Pass callback (R18)
 				sessionDir,
 				validate: async (result) => {
-					const modified = await getModifiedFiles(cwd);
+					const modified = await getModifiedFiles(workRoot);
 					const out = (result.output ?? "").trim();
 					return modified.length === 0 &&
 						out.length < MIN_IMPLEMENTER_OUTPUT_CHARS
@@ -831,7 +852,7 @@ Address all issues raised in the review.`;
 				},
 				onEscalate: ({ fromModel, toModel }) => {
 					recordEscalation(
-						cwd,
+						projectRoot,
 						state,
 						{
 							role: "implementer",
@@ -855,7 +876,8 @@ Address all issues raised in the review.`;
 					implementResult.completed !== false &&
 					!implementResult.limitHit;
 				await handleAgentError(
-					cwd,
+					projectRoot,
+					workRoot,
 					state,
 					validateOnly
 						? {
@@ -892,7 +914,7 @@ Address all issues raised in the review.`;
 
 			// Create commit after implementation
 			const commitResult = await createAgentCommit(
-				cwd,
+				workRoot,
 				state,
 				{
 					role: "implementer",
@@ -958,7 +980,8 @@ Address all issues raised in the review.`;
 
 		const codeReviewResult = await runReview(
 			{
-				cwd,
+				projectRoot,
+				workRoot,
 				projectConfig,
 				systemPrompts: SYSTEM_PROMPTS,
 				state,
@@ -993,7 +1016,7 @@ Address all issues raised in the review.`;
 				},
 				recordReviewOutput: ({ role, phase, cycle, verdict, output }) => {
 					writeReviewLog(
-						cwd,
+						projectRoot,
 						state.id,
 						{ role, phase, cycle, verdict, output },
 						ctx.ui.notify.bind(ctx.ui),
@@ -1011,7 +1034,7 @@ Address all issues raised in the review.`;
 					hardFailureRetries: projectConfig.escalation.hardFailureRetries,
 					onEscalate: ({ role, cycle, fromModel, toModel, reason }) =>
 						recordEscalation(
-							cwd,
+							projectRoot,
 							state,
 							{ role, phase: phaseIdx + 1, cycle, fromModel, toModel, reason },
 							save,
@@ -1066,13 +1089,13 @@ Make the necessary fixes.`,
 		// ========================================
 		// STEP 5: Create Commit for Phase (if uncommitted changes remain)
 		// ========================================
-		const remainingChanges = await getModifiedFiles(cwd);
+		const remainingChanges = await getModifiedFiles(workRoot);
 		if (remainingChanges.length > 0) {
 			updateImplWidget(ctx, state, "Creating commit...");
 			ctx.ui.notify(`💾 Creating commit for phase ${phaseIdx + 1}...`, "info");
 
 			const phaseCommitMsg = `feat(phase-${phaseIdx + 1}): complete phase ${phaseIdx + 1} implementation`;
-			const committed = await createCommit(cwd, phaseCommitMsg);
+			const committed = await createCommit(workRoot, phaseCommitMsg);
 			if (committed) {
 				if (!state.phaseCommits[phaseIdx]) {
 					state.phaseCommits[phaseIdx] = [];

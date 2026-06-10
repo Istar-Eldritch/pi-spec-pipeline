@@ -18,6 +18,7 @@ import type {
 } from "./types.ts";
 import { READ_ONLY_ROLES, WRITE_ROLES } from "./types.ts";
 import { updateImplWidget } from "./formatting.ts";
+import { resolveProjectRoot } from "./worktree.ts";
 
 // ============================================
 // Progress Display Constants
@@ -217,7 +218,15 @@ function writeCacheDiff(
 ): void {
 	if (!prevHash) return;
 	try {
-		const dir = path.join(cwd, ".pi", "spec-pipeline", "cache-diffs");
+		// Write diff samples under the main repo (not the worktree) so they
+		// survive worktree cleanup. The in-memory cache map is still keyed by the
+		// raw cwd (workRoot) — per-run isolation is acceptable here.
+		const dir = path.join(
+			resolveProjectRoot(cwd),
+			".pi",
+			"spec-pipeline",
+			"cache-diffs",
+		);
 		fs.mkdirSync(dir, { recursive: true });
 		const stamp = new Date().toISOString().replace(/[:.]/g, "-");
 		const file = path.join(

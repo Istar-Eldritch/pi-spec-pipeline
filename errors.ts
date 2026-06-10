@@ -220,10 +220,16 @@ ${error.agentTask}
  * Handle agent error - save state, log error, notify user
  * Returns the ErrorDetails object for the caller to use
  *
+ * Destructive recovery (stash + reset) runs in `workRoot` (the worktree),
+ * while the error log is written under `projectRoot` (the main repo) so it
+ * survives worktree cleanup. When the two roots are equal (legacy mode) this
+ * is byte-for-byte identical to the previous single-`cwd` behavior.
+ *
  * @param saveFn - Function to save the state after updating error fields
  */
 export async function handleAgentError(
-	cwd: string,
+	projectRoot: string,
+	workRoot: string,
 	state: ErrorableState,
 	result: AgentResult,
 	agent: AgentName,
@@ -263,9 +269,9 @@ export async function handleAgentError(
 		completed: result.completed,
 	};
 
-	// Stash any uncommitted changes from the failed operation
+	// Stash any uncommitted changes from the failed operation (in the worktree)
 	const stashRef = await stashChanges(
-		cwd,
+		workRoot,
 		errorDetails.timestamp.replace(/[:.]/g, "-"),
 	);
 	if (stashRef) {
@@ -274,7 +280,7 @@ export async function handleAgentError(
 
 		// Reset working directory to clean state (R6)
 		const { resetToHead } = await import("./git.ts");
-		const resetSuccess = await resetToHead(cwd);
+		const resetSuccess = await resetToHead(workRoot);
 		if (resetSuccess) {
 			notify("🔄 Working directory reset to clean state", "info");
 		} else {
@@ -289,8 +295,8 @@ export async function handleAgentError(
 	state.lastError = errorDetails;
 	saveFn?.();
 
-	// Append to error log
-	appendErrorLog(cwd, state.id, errorDetails);
+	// Append to error log (under the main repo so it survives worktree cleanup)
+	appendErrorLog(projectRoot, state.id, errorDetails);
 
 	// Format user notification with visual formatting
 	const emoji = getErrorEmoji(errorDetails.errorType);

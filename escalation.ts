@@ -46,7 +46,7 @@ export const ESCALATION_LOG_RELATIVE_PATH = ".pi/spec-pipeline/escalations.log";
  * the cross-run log. Logging must never throw — swallow fs errors.
  */
 export function recordEscalation(
-	cwd: string,
+	projectRoot: string,
 	state: ImplementationState,
 	record: Omit<EscalationRecord, "timestamp">,
 	save: () => void,
@@ -65,7 +65,7 @@ export function recordEscalation(
 	save();
 
 	try {
-		const logPath = path.join(cwd, ESCALATION_LOG_RELATIVE_PATH);
+		const logPath = path.join(projectRoot, ESCALATION_LOG_RELATIVE_PATH);
 		const logDir = path.dirname(logPath);
 		fs.mkdirSync(logDir, { recursive: true });
 		const line =

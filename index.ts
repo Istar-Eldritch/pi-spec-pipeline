@@ -82,7 +82,11 @@ import { recordEscalation } from "./escalation.ts";
 import { runAgentWithConfig } from "./agents.ts";
 
 // Import pipelines
-import { runImplementPipeline, extractPhases } from "./implement-pipeline.ts";
+import {
+	runImplementPipeline,
+	extractPhases,
+	type PipelineRoots,
+} from "./implement-pipeline.ts";
 
 // Import system prompts
 import { createSystemPrompts, buildPromptOptions } from "./agents-config.ts";
@@ -297,7 +301,9 @@ export default function (pi: ExtensionAPI) {
 
 				updateImplWidget(ctx, state, "Initializing...");
 
-				await runImplementPipeline(state, cwd, projectConfig, ctx);
+				// Phase 3: legacy mode — both roots equal the triggering checkout.
+				const roots: PipelineRoots = { projectRoot: cwd, workRoot: cwd };
+				await runImplementPipeline(state, roots, projectConfig, ctx);
 			} else {
 				ctx.ui.notify(
 					"❌ /implement requires a delivery-plan file.\n\n" +
@@ -452,7 +458,7 @@ export default function (pi: ExtensionAPI) {
 					const errCycle = state.lastError.cycle;
 					const retrySuccess = await retryFailedOperation(
 						state,
-						cwd,
+						{ projectRoot: cwd, workRoot: cwd } satisfies PipelineRoots,
 						projectConfig,
 						() => saveImplState(cwd, state),
 						ctx,
@@ -494,7 +500,9 @@ export default function (pi: ExtensionAPI) {
 				}
 			}
 
-			await runImplementPipeline(state, cwd, projectConfig, ctx);
+			// Phase 3: legacy mode — both roots equal the triggering checkout.
+			const resumeRoots: PipelineRoots = { projectRoot: cwd, workRoot: cwd };
+			await runImplementPipeline(state, resumeRoots, projectConfig, ctx);
 		},
 	});
 

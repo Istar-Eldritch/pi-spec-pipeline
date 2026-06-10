@@ -14,6 +14,7 @@ import type {
 	RoleName,
 	EscalationReason,
 } from "./types.ts";
+import type { PipelineRoots } from "./implement-pipeline.ts";
 import { runAgentWithConfig, createProgressCallback } from "./agents.ts";
 import { runAgentWithEscalation } from "./escalation.ts";
 import { getSessionLogDir } from "./state.ts";
@@ -113,7 +114,10 @@ export function hasSignificantIssues(output: string): boolean {
 // ============================================
 
 export interface ReviewContext {
-	cwd: string;
+	/** Main repo root: state, session logs, escalation log. */
+	projectRoot: string;
+	/** Worktree: agent cwd and all git mutations. */
+	workRoot: string;
 	projectConfig: ProjectConfig;
 	systemPrompts: { [K in ReviewerRole]: string } & { addressReview: string };
 	state: ReviewableState;
@@ -198,7 +202,8 @@ export async function runReview(
 	operation: ReviewOperation,
 ): Promise<ReviewResult> {
 	const {
-		cwd,
+		projectRoot,
+		workRoot,
 		projectConfig,
 		systemPrompts,
 		state,
@@ -251,7 +256,7 @@ export async function runReview(
 
 		notify(`${phaseCtx} Review cycle ${cycle}/${maxCycles}`, "info");
 		await createCheckpointAndSave(
-			cwd,
+			workRoot,
 			state,
 			role,
 			saveFn,
@@ -271,7 +276,7 @@ export async function runReview(
 			maxEscalatedRetries: ctx.escalation?.hardFailureRetries ?? 0,
 			role,
 			task: reviewTask,
-			cwd,
+			cwd: workRoot,
 			systemPrompt: systemPrompts[role],
 			signal,
 			onOutput,
@@ -302,7 +307,8 @@ export async function runReview(
 
 		if (reviewRun.failureDescription) {
 			await handleAgentError(
-				cwd,
+				projectRoot,
+				workRoot,
 				state,
 				reviewResult,
 				reviewRun.config.model,
@@ -380,7 +386,7 @@ export async function runReview(
 			maxEscalatedRetries: ctx.escalation?.hardFailureRetries ?? 0,
 			role: "addressReview",
 			task: fixTaskText,
-			cwd,
+			cwd: workRoot,
 			systemPrompt: systemPrompts.addressReview,
 			signal,
 			onOutput,
@@ -412,7 +418,8 @@ export async function runReview(
 
 		if (fixRun.failureDescription) {
 			await handleAgentError(
-				cwd,
+				projectRoot,
+				workRoot,
 				state,
 				fixResult,
 				fixConfig.model,
@@ -432,7 +439,7 @@ export async function runReview(
 		}
 
 		const commitResult = await createAgentCommit(
-			cwd,
+			workRoot,
 			state,
 			{
 				role: "addressReview",
@@ -482,7 +489,7 @@ export async function runReview(
 
 export async function retryFailedOperation(
 	state: ReviewableState,
-	cwd: string,
+	roots: PipelineRoots,
 	projectConfig: ProjectConfig,
 	saveFn: () => void,
 	ctx: {
@@ -505,6 +512,7 @@ export async function retryFailedOperation(
 		}) => void;
 	},
 ): Promise<boolean> {
+	const { projectRoot, workRoot } = roots;
 	const error = state.lastError;
 	if (!error || typeof error === "string") return false;
 
@@ -520,7 +528,7 @@ export async function retryFailedOperation(
 	}
 
 	await createCheckpointAndSave(
-		cwd,
+		workRoot,
 		state,
 		`retry_${error.role}`,
 		saveFn,
@@ -583,17 +591,18 @@ export async function retryFailedOperation(
 	const result = await runAgentWithConfig(
 		modelConfig,
 		error.agentTask,
-		cwd,
+		workRoot,
 		systemPrompt,
 		undefined,
 		progressCallback,
 		error.role,
-		getSessionLogDir(cwd, state.id),
+		getSessionLogDir(projectRoot, state.id),
 	);
 
 	if (result.exitCode !== 0) {
 		await handleAgentError(
-			cwd,
+			projectRoot,
+			workRoot,
 			state,
 			result,
 			modelConfig.model,
