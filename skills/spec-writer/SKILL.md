@@ -2,24 +2,28 @@
 name: spec-writer
 description: |
   Translate a completed UX discovery document into a precise, structured
-  technical specification. Use after discovery is complete and before planning
-  or implementation. Produces numbered, traceable requirements and writes the
-  spec to the requested output path.
+  technical specification with a phased delivery plan. Use after discovery is
+  complete and before implementation begins. Produces numbered, traceable
+  requirements, sequenced delivery phases, and a machine-readable JSON phases
+  block that /implement parses directly.
 ---
 
 # Spec Writer
 
 Use when a UX discovery document exists and needs to become a technical
-specification. This skill pairs with the `spec-writer` agent.
+specification with an executable delivery plan. This skill pairs with the
+`spec-writer` agent, which handles both requirements definition and delivery
+planning in a single pass.
 
 ## When to Trigger
 
 - A discovery interview has produced a structured problem summary or discovery document
 - The user asks to draft, write, or generate a spec from discovery output
-- The next step is requirements definition, not implementation planning
+- The user asks for a delivery plan, implementation roadmap, phase plan, or execution plan
+- The next step is requirements definition and work sequencing, not coding
 
 Skip if the user is still exploring the problem space; use `ux-discovery-interviewer` first.
-Skip if the spec is already complete and the user wants implementation; use `implement-pipeline` instead.
+Skip if a complete spec with phases already exists and the user wants implementation; use `implement-pipeline` instead.
 
 ## How to Run
 
@@ -43,13 +47,17 @@ The spec includes:
 - Scope and boundaries
 - Advisory solution approach
 - Open questions and risks
+- A phased delivery plan: per-phase goals, entry conditions, exit criteria,
+  parallelism, effort, difficulty, and blockers
+- A final `## Phases (JSON)` section — a fenced ```json block encoding the
+  phases (`phase`, `focus`, `effort`, `difficulty`) that `/implement` parses
+  to sequence the work and route `hard` phases to a stronger model
 
 ## Handoff
 
-After the spec is written, review the saved file path with the user. The next step before implementation is creating a delivery plan:
+After the spec is written, review the saved file path with the user. Once they
+approve it, hand off directly to `implement-pipeline`:
 
 ```text
-subagent agent=delivery-plan-architect task="Read <spec-path> and write the delivery plan to <output-path>."
+/implement <spec-path>
 ```
-
-Once the delivery plan is approved, hand off to `implement-pipeline` to execute it.

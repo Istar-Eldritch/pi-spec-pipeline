@@ -7,6 +7,142 @@ const SHORT_NAME = "warm_pools";
 
 describe("extractPhases", () => {
 	// ============================================
+	// Format 0: JSON phases block (preferred)
+	// ============================================
+	describe("JSON phases block (preferred)", () => {
+		it("extracts phases from a fenced json block", () => {
+			const spec = `
+## Phases (JSON)
+
+\`\`\`json
+{
+  "phases": [
+    { "phase": 1, "focus": "Backend API endpoints", "effort": "M", "difficulty": "standard" },
+    { "phase": 2, "focus": "Auth migration", "effort": "S", "difficulty": "hard" }
+  ]
+}
+\`\`\`
+`;
+			const result = extractPhases(spec, TIMESTAMP, SHORT_NAME);
+			expect(result.isInline).toBe(false);
+			expect(result.paths).toEqual([
+				`${TIMESTAMP}_${SHORT_NAME}/phase1_backend_api_endpoints.md`,
+				`${TIMESTAMP}_${SHORT_NAME}/phase2_auth_migration.md`,
+			]);
+			expect(result.difficulties).toEqual(["standard", "hard"]);
+		});
+
+		it("JSON block takes priority over phase tables in the same document", () => {
+			const spec = `
+| Phase | Focus | Effort | Difficulty |
+|-------|-------|--------|------------|
+| Phase 1 | Table focus loses | 2 days | hard |
+
+\`\`\`json
+{ "phases": [ { "phase": 1, "focus": "Json focus", "effort": "S", "difficulty": "standard" } ] }
+\`\`\`
+`;
+			const result = extractPhases(spec, TIMESTAMP, SHORT_NAME);
+			expect(result.paths).toEqual([
+				`${TIMESTAMP}_${SHORT_NAME}/phase1_json_focus.md`,
+			]);
+			expect(result.difficulties).toEqual(["standard"]);
+		});
+
+		it("skips non-phases json blocks (e.g. config examples) and uses the phases one", () => {
+			const spec = `
+\`\`\`json
+{ "testCommand": "bun test", "reviewCycles": 2 }
+\`\`\`
+
+\`\`\`json
+{ "phases": [ { "phase": 1, "focus": "Real phases block", "effort": "L", "difficulty": "hard" } ] }
+\`\`\`
+`;
+			const result = extractPhases(spec, TIMESTAMP, SHORT_NAME);
+			expect(result.paths).toEqual([
+				`${TIMESTAMP}_${SHORT_NAME}/phase1_real_phases_block.md`,
+			]);
+			expect(result.difficulties).toEqual(["hard"]);
+		});
+
+		it("sorts entries by phase number", () => {
+			const spec = `
+\`\`\`json
+{ "phases": [
+  { "phase": 2, "focus": "Second phase", "difficulty": "hard" },
+  { "phase": 1, "focus": "First phase", "difficulty": "standard" }
+] }
+\`\`\`
+`;
+			const result = extractPhases(spec, TIMESTAMP, SHORT_NAME);
+			expect(result.paths).toEqual([
+				`${TIMESTAMP}_${SHORT_NAME}/phase1_first_phase.md`,
+				`${TIMESTAMP}_${SHORT_NAME}/phase2_second_phase.md`,
+			]);
+			expect(result.difficulties).toEqual(["standard", "hard"]);
+		});
+
+		it("missing or unrecognized difficulty defaults to standard", () => {
+			const spec = `
+\`\`\`json
+{ "phases": [
+  { "phase": 1, "focus": "No difficulty key" },
+  { "phase": 2, "focus": "Weird value", "difficulty": "EXTREME" },
+  { "phase": 3, "focus": "Uppercase hard", "difficulty": "HARD" }
+] }
+\`\`\`
+`;
+			const result = extractPhases(spec, TIMESTAMP, SHORT_NAME);
+			expect(result.difficulties).toEqual(["standard", "standard", "hard"]);
+		});
+
+		it("falls back to table parsing when the json block is malformed", () => {
+			const spec = `
+\`\`\`json
+{ "phases": [ { "phase": 1, "focus": "Broken", }, ] }
+\`\`\`
+
+| Phase 1 | Backend API | 2 days | hard |
+`;
+			const result = extractPhases(spec, TIMESTAMP, SHORT_NAME);
+			expect(result.paths).toEqual([
+				`${TIMESTAMP}_${SHORT_NAME}/phase1_backend_api.md`,
+			]);
+			expect(result.difficulties).toEqual(["hard"]);
+		});
+
+		it("rejects entries missing phase number or focus", () => {
+			const spec = `
+\`\`\`json
+{ "phases": [ { "focus": "No phase number" } ] }
+\`\`\`
+
+### Phase 1: Fallback inline phase
+`;
+			const result = extractPhases(spec, TIMESTAMP, SHORT_NAME);
+			expect(result.isInline).toBe(true);
+			expect(result.paths).toEqual([
+				`${TIMESTAMP}_${SHORT_NAME}/phase1_fallback_inline_phase.md`,
+			]);
+		});
+
+		it("rejects an empty phases array", () => {
+			const spec = `
+\`\`\`json
+{ "phases": [] }
+\`\`\`
+
+| Phase 1 | Table fallback | 1 day |
+`;
+			const result = extractPhases(spec, TIMESTAMP, SHORT_NAME);
+			expect(result.paths).toEqual([
+				`${TIMESTAMP}_${SHORT_NAME}/phase1_table_fallback.md`,
+			]);
+		});
+	});
+
+	// ============================================
 	// Format 1: Table with links (legacy)
 	// ============================================
 	describe("table format with links (legacy)", () => {

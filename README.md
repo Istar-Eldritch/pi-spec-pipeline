@@ -4,16 +4,15 @@ A workflow automation extension for [pi](https://github.com/mariozechner/pi-codi
 
 ## Overview
 
-The spec pipeline implements a four-stage, agent-driven development workflow:
+The spec pipeline implements a three-stage, agent-driven development workflow:
 
 1. **Discovery** — The `ux-discovery-interviewer` agent conducts a structured problem-space interview before any spec or code is written.
-2. **Spec Writing** — The `spec-writer` agent translates the discovery output into a numbered, traceable technical specification.
-3. **Delivery Planning** — The `delivery-plan-architect` agent reads the spec and produces a phased delivery plan that `/implement` uses to drive execution.
-4. **Implementation** — `/implement` executes each phase: plan → code → review → commit.
+2. **Spec Writing & Delivery Planning** — The `spec-writer` agent translates the discovery output into a numbered, traceable technical specification with a phased delivery plan, ending in a machine-readable JSON phases block.
+3. **Implementation** — `/implement` executes each phase: plan → code → review → commit.
 
 ### Key Features
 
-- **Phased Delivery Plans** — The `delivery-plan-architect` agent produces a phase table (`Phase | Focus | Effort | Difficulty`) that `/implement` parses to sequence the work automatically.
+- **Phased Delivery Plans** — The `spec-writer` agent ends every spec with a `Phases (JSON)` block that `/implement` parses to sequence the work automatically (legacy `Phase | Focus | Effort | Difficulty` tables remain supported).
 - **Per-Phase Planning** — Each phase gets an AI-drafted implementation plan before coding begins (skip with `--no-plan`).
 - **Code Review Loop** — Automated review and fix cycles after every phase (skip with `--no-review`).
 - **Git Integration** — Automatic branching, commits, checkpoints, and error recovery.
@@ -25,14 +24,11 @@ The spec pipeline implements a four-stage, agent-driven development workflow:
 # 1. Run the discovery interview (optional but recommended)
 subagent agent=ux-discovery-interviewer task="<initial feature context>"
 
-# 2. Write the spec
+# 2. Write the spec (includes the phased delivery plan)
 subagent agent=spec-writer task="Read <discovery-path> and write the spec to <output-path>."
 
-# 3. Create the delivery plan
-subagent agent=delivery-plan-architect task="Read <spec-path> and write the delivery plan to <output-path>."
-
-# 4. Implement
-/implement <delivery-plan-path>
+# 3. Implement
+/implement <spec-path>
 ```
 
 ## Commands
@@ -52,16 +48,24 @@ subagent agent=delivery-plan-architect task="Read <spec-path> and write the deli
 
 ### Delivery Plans
 
-The `delivery-plan-architect` agent reads a technical specification and produces a structured delivery plan containing a phase table. `/implement` parses this table to sequence the phases:
+The `spec-writer` agent reads a discovery document and produces a technical specification that ends with a phased delivery plan and a machine-readable `Phases (JSON)` block. `/implement` parses this block to sequence the phases:
 
-```markdown
-| Phase | Focus | Effort | Difficulty |
-|-------|-------|--------|------------|
-| Phase 1 | Backend API | 2 days | standard |
-| Phase 2 | Auth migration | 1 day | hard |
+````markdown
+## Phases (JSON)
+
+```json
+{
+  "phases": [
+    { "phase": 1, "focus": "Backend API", "effort": "M", "difficulty": "standard" },
+    { "phase": 2, "focus": "Auth migration", "effort": "S", "difficulty": "hard" }
+  ]
+}
 ```
+````
 
 Phases marked `hard` are automatically routed to the strongest configured model tier.
+
+Legacy formats are still parsed as fallbacks: markdown phase tables (`| Phase 1 | Focus | Effort | Difficulty |`), Typst tables, and inline `### Phase 1: Name` headings.
 
 ### Implementation Stage
 

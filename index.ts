@@ -2,8 +2,9 @@
  * Spec Pipeline Extension
  *
  * IMPLEMENTATION (/implement):
- *   1. Accepts a delivery-plan file produced by the delivery-plan-architect agent.
- *   2. Parses the phase table (| Phase | Focus | Effort | Difficulty? |).
+ *   1. Accepts a spec/delivery-plan file produced by the spec-writer agent.
+ *   2. Parses the phases — preferring the JSON phases block, falling back to
+ *      legacy phase tables (| Phase | Focus | Effort | Difficulty? |).
  *   3. Creates an isolated git worktree on a new impl/<shortName>-<ts> branch
  *      forked from the triggering checkout's HEAD.
  *   4. For each phase (inside the worktree): plan → implement → code review → commit.
@@ -447,8 +448,8 @@ export default function (pi: ExtensionAPI) {
 				ctx.ui.notify(
 					"❌ /implement requires a delivery-plan file.\n\n" +
 						"Usage: /implement [--no-plan] [--no-review] [--auto] <delivery-plan.md>\n\n" +
-						"To produce a delivery plan, run the delivery-plan-architect agent:\n" +
-						'  subagent agent=delivery-plan-architect task="Read <spec-path> and write the delivery plan to <output-path>."',
+						"To produce a spec with a delivery plan, run the spec-writer agent:\n" +
+						'  subagent agent=spec-writer task="Read <discovery-path> and write the spec to <output-path>."',
 					"error",
 				);
 				return;

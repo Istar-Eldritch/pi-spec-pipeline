@@ -9,9 +9,11 @@ description: |
 
 # Implement Pipeline
 
-Use when a delivery-plan document is ready for implementation and the user asks
-you to run it. The pipeline reads the delivery-plan file, extracts phases from
-its phase table, and processes each one: implement → review → commit.
+Use when a delivery-plan document (a spec produced by the `spec-writer` agent,
+which includes the phased delivery plan) is ready for implementation and the
+user asks you to run it. The pipeline reads the document, extracts phases from
+its `Phases (JSON)` block (legacy phase tables are still supported), and
+processes each one: implement → review → commit.
 
 ## When to use
 
@@ -85,7 +87,8 @@ If the pipeline is interrupted, use `/implement-resume`:
 1. Resolves the project root (handles the case where cwd is inside a worktree)
 2. Creates an isolated git worktree on a new `impl/` branch
 3. Runs an optional setup script in the worktree (e.g. `npm ci`)
-4. Parses the phase table from the delivery-plan document
+4. Parses the phases from the delivery-plan document — preferring the
+   `Phases (JSON)` block, falling back to legacy phase-table formats
 5. Per phase (inside the worktree):
    - Plans (or reads plan)
    - Implements code and runs tests

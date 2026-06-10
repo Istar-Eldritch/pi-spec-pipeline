@@ -240,25 +240,95 @@ function normalizeDifficulty(raw: string | undefined): PlanDifficulty {
 	return raw?.trim().toLowerCase() === "hard" ? "hard" : "standard";
 }
 
+/** A validated phase entry from the machine-readable JSON phases block. */
+interface JsonPhaseEntry {
+	phase: number;
+	focus: string;
+	difficulty: PlanDifficulty;
+}
+
+/**
+ * Try to parse the contents of a fenced ```json block as a phases payload:
+ *
+ *   { "phases": [ { "phase": 1, "focus": "...", "effort": "M", "difficulty": "hard" } ] }
+ *
+ * Returns null if the block is not valid JSON or does not match the expected
+ * shape (every entry needs a positive integer `phase` and a non-empty string
+ * `focus`). Unknown extra keys (e.g. `effort`, `title`) are ignored, so the
+ * spec-writer agent can enrich entries without breaking the parser.
+ */
+function tryParsePhasesJson(raw: string): JsonPhaseEntry[] | null {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(raw);
+	} catch {
+		return null;
+	}
+	if (typeof parsed !== "object" || parsed === null) return null;
+	const phases = (parsed as { phases?: unknown }).phases;
+	if (!Array.isArray(phases) || phases.length === 0) return null;
+
+	const entries: JsonPhaseEntry[] = [];
+	for (const item of phases) {
+		if (typeof item !== "object" || item === null) return null;
+		const { phase, focus, difficulty } = item as Record<string, unknown>;
+		if (typeof phase !== "number" || !Number.isInteger(phase) || phase < 1) {
+			return null;
+		}
+		if (typeof focus !== "string" || focus.trim() === "") return null;
+		entries.push({
+			phase,
+			focus: focus.trim(),
+			difficulty: normalizeDifficulty(
+				typeof difficulty === "string" ? difficulty : undefined,
+			),
+		});
+	}
+	entries.sort((a, b) => a.phase - b.phase);
+	return entries;
+}
+
 /**
  * Extract phases from a spec document.
  *
- * Supports four formats:
- * 1. Table format without links (preferred): | Phase 1 | Focus description | Effort | Difficulty? |
- * 2. Table format with links (legacy): | Phase 1 | Focus | Effort | [name](./path/phase1.md) |
- * 3. Typst table format: [Phase 1], [Focus description], [Effort], [Difficulty]?,
- * 4. Inline format (fallback): ### Phase 1: Name (hard)  (also accepts — – - as separator)
+ * Supports five formats, tried in order:
+ * 1. JSON phases block (preferred): a fenced ```json block containing
+ *    { "phases": [ { "phase": 1, "focus": "...", "difficulty": "hard" } ] }
+ *    — emitted by the spec-writer agent at the end of the spec
+ * 2. Table format without links: | Phase 1 | Focus description | Effort | Difficulty? |
+ * 3. Table format with links (legacy): | Phase 1 | Focus | Effort | [name](./path/phase1.md) |
+ * 4. Typst table format: [Phase 1], [Focus description], [Effort], [Difficulty]?,
+ * 5. Inline format (fallback): ### Phase 1: Name (hard)  (also accepts — – - as separator)
  *
- * The optional Difficulty cell (`standard` | `hard`, case-insensitive) routes
- * `hard` phases to the escalated implementer tier — including when plan
- * generation is skipped. Absent or unrecognized values mean "standard".
+ * Difficulty (`standard` | `hard`, case-insensitive) routes `hard` phases to
+ * the escalated implementer tier — including when plan generation is skipped.
+ * Absent or unrecognized values mean "standard".
  */
 export function extractPhases(
 	specContent: string,
 	specTimestamp: string,
 	shortName: string,
 ): { paths: string[]; isInline: boolean; difficulties: PlanDifficulty[] } {
-	// First try table format with links (legacy support; no difficulty column)
+	// Format 1 (preferred): machine-readable JSON phases block. Scan every
+	// fenced ```json block and use the first one that validates as a phases
+	// payload — other JSON blocks (config examples, etc.) are skipped.
+	const jsonFenceRegex = /```json[^\n]*\n([\s\S]*?)```/g;
+	let fenceMatch;
+	while ((fenceMatch = jsonFenceRegex.exec(specContent)) !== null) {
+		const entries = tryParsePhasesJson(fenceMatch[1]);
+		if (entries) {
+			return {
+				paths: entries.map(
+					(e) =>
+						`${specTimestamp}_${shortName}/phase${e.phase}_${sanitizePhaseDescription(e.focus)}.md`,
+				),
+				isInline: false,
+				difficulties: entries.map((e) => e.difficulty),
+			};
+		}
+	}
+
+	// Next try table format with links (legacy support; no difficulty column)
 	const linkedPhases: string[] = [];
 	const linkedRegex =
 		/\|\s*Phase\s*\d+\s*\|[^|]+\|[^|]+\|\s*\[([^\]]+)\]\(([^)]+)\)/g;

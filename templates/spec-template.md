@@ -44,19 +44,7 @@ Each requirement must be independently verifiable.
 
 ## Implementation Plan
 
-The pipeline parses the table below to drive `/implement`. The table is **mandatory** and must be the first thing in this section.
-
-| Phase | Focus | Effort |
-|-------|-------|--------|
-| Phase 1 | High-level capability description (e.g. "Backend API endpoints for X") | 1 day |
-| Phase 2 | High-level capability description (e.g. "Real-time notification delivery") | 2 days |
-| Phase 3 | High-level capability description (e.g. "Frontend UI components") | 1 day |
-
-**Rules:**
-- Phase descriptions describe WHAT (capability), not HOW (file paths, function names).
-- Do NOT include phase file links or a "Details" column.
-- Detailed `### Phase N: Name` subsections below are **optional** and must come AFTER the table.
-- If you use detailed subsections, use `:` as the separator (not em-dash/en-dash) so the fallback parser works.
+Detailed `### Phase N: Name` subsections are **optional**; the machine-readable source of truth is the `## Phases (JSON)` section at the end of the document.
 
 ### Phase 1: <Name>  *(optional detail)*
 
@@ -65,6 +53,10 @@ Brief prose describing this phase's capability, layers involved, and any cross-p
 ### Phase 2: <Name>  *(optional detail)*
 
 ...
+
+**Rules:**
+- Phase descriptions describe WHAT (capability), not HOW (file paths, function names).
+- If you use detailed subsections, use `:` as the separator (not em-dash/en-dash) so the fallback parser works.
 
 ## Risks & Mitigations
 
@@ -75,3 +67,16 @@ Brief prose describing this phase's capability, layers involved, and any cross-p
 ## References
 
 - Related specs, RFCs, or tickets
+
+## Phases (JSON)
+
+The pipeline parses the JSON block below to drive `/implement`. It is **mandatory**, must be the **last section** of the document, and must be valid JSON (double-quoted strings, no trailing commas, no comments). `difficulty` is exactly `"standard"` or `"hard"` (lowercase); `hard` phases are routed to a stronger model.
+
+```json
+{
+  "phases": [
+    { "phase": 1, "focus": "High-level capability description", "effort": "S", "difficulty": "standard" },
+    { "phase": 2, "focus": "High-level capability description", "effort": "M", "difficulty": "hard" }
+  ]
+}
+```
