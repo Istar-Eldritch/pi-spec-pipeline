@@ -160,6 +160,66 @@ export async function getModifiedFiles(cwd: string): Promise<string[]> {
 }
 
 /**
+ * Get the current HEAD commit hash, or undefined when it cannot be resolved
+ * (e.g. not a git repo, or an unborn branch with no commits yet).
+ */
+export async function getHeadCommit(cwd: string): Promise<string | undefined> {
+	const result = await execGit(cwd, ["rev-parse", "HEAD"]);
+	if (result.code !== 0) {
+		return undefined;
+	}
+	const hash = result.stdout.trim();
+	return hash.length > 0 ? hash : undefined;
+}
+
+/**
+ * Get the list of files changed since a base commit. Unlike
+ * {@link getModifiedFiles} (which only sees the uncommitted working tree),
+ * this also counts changes that were COMMITTED after `baseRef` — so an agent
+ * that commits its own work is still detected as having made changes.
+ *
+ * Includes:
+ * - Files changed between `baseRef` and the current working tree
+ *   (covers both new commits and uncommitted tracked changes)
+ * - Untracked files
+ *
+ * Returns an array of file paths relative to the repo root.
+ */
+export async function getChangedFilesSince(
+	cwd: string,
+	baseRef: string,
+): Promise<string[]> {
+	const files = new Set<string>();
+
+	// Diff base commit against the working tree: covers commits made after
+	// baseRef AND uncommitted tracked modifications/deletions.
+	const diffResult = await execGit(cwd, ["diff", "--name-only", baseRef]);
+	if (diffResult.code === 0 && diffResult.stdout) {
+		diffResult.stdout
+			.split("\n")
+			.map((line) => line.trim())
+			.filter((line) => line.length > 0)
+			.forEach((file) => files.add(file));
+	}
+
+	// Untracked files (new files never committed nor staged)
+	const untrackedResult = await execGit(cwd, [
+		"ls-files",
+		"--others",
+		"--exclude-standard",
+	]);
+	if (untrackedResult.code === 0 && untrackedResult.stdout) {
+		untrackedResult.stdout
+			.split("\n")
+			.map((line) => line.trim())
+			.filter((line) => line.length > 0)
+			.forEach((file) => files.add(file));
+	}
+
+	return Array.from(files);
+}
+
+/**
  * Stage specific files (not all files)
  * Handles modifications, deletions, and renames
  * Returns true if staging was successful

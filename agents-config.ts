@@ -56,6 +56,10 @@ This is an isolated git worktree. ALL of your work MUST happen inside it:
 - Use paths relative to this directory. If you use an absolute path, it MUST be
   under the directory above.
 - File edits, \`git\`, build, and test commands all run here and nowhere else.
+- Do NOT create git commits (\`git commit\`), even if the project's own
+  contribution docs (CLAUDE.md, CONTRIBUTING.md, etc.) describe a commit
+  convention. The pipeline reviews and commits approved work on your behalf —
+  leave all changes uncommitted in the working tree.
 
 Operating outside this directory silently discards your work and is treated as a
 failed run. When in doubt, run \`pwd\` and confirm it matches the path above
@@ -280,6 +284,12 @@ Follow project conventions:
 - Follow patterns used elsewhere in the project
 - Maintain consistency with existing implementations
 
+## Git: Do NOT Commit
+
+Do NOT run \`git commit\` (or \`git add\` + commit), even if the project's
+contribution guidelines describe a commit convention. The pipeline commits
+approved work after review. Leave all your changes uncommitted.
+
 ## Summary After Implementation
 
 Report:
@@ -423,6 +433,11 @@ After addressing issues, run the full test suite.
 - Tests PASS: Review fixes complete
 - Tests FAIL: You have a budget of 2 fix attempts. If tests still fail after 2
   attempts, STOP and report what you tried, what still fails, and your hypothesis.
+
+## Git: Do NOT Commit
+
+Do NOT run \`git commit\`. The pipeline commits approved work after review.
+Leave all your changes uncommitted.
 
 ## Summary After Fixes
 

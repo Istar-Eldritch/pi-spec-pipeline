@@ -20,7 +20,13 @@ import type {
 	PlanDifficulty,
 } from "./types.ts";
 import { saveImplState, getSessionLogDir } from "./state.ts";
-import { createAgentCommit, createCommit, getModifiedFiles } from "./git.ts";
+import {
+	createAgentCommit,
+	createCommit,
+	getChangedFilesSince,
+	getHeadCommit,
+	getModifiedFiles,
+} from "./git.ts";
 import { deriveShortName } from "./worktree.ts";
 import { extractPhaseName, extractDocName } from "./commit-agent.ts";
 import { handleAgentError } from "./errors.ts";
@@ -813,6 +819,13 @@ Address all issues raised in the review.`;
 				true, // isImplPipeline
 			);
 
+			// Snapshot HEAD before the implementer runs so validation can detect
+			// work even when the agent commits its own changes (some agents follow
+			// the target repo's commit conventions and `git commit` as they go,
+			// leaving a clean working tree). undefined when HEAD is unresolvable
+			// (unborn branch) — validation then falls back to working-tree-only.
+			const preImplementationHead = await getHeadCommit(workRoot);
+
 			const implementRun = await runAgentWithEscalation({
 				baseConfig: implementerConfig,
 				// Already escalated when the phase is hard; otherwise allow a
@@ -827,18 +840,26 @@ Address all issues raised in the review.`;
 				onOutput: implProgressCallback, // ← Pass callback (R18)
 				sessionDir,
 				validate: async (result) => {
-					const modified = await getModifiedFiles(workRoot);
 					// Zero changes in the worktree is ALWAYS a failure, regardless of how
 					// much the agent narrated. The implementer's job is to modify files in
 					// `workRoot`; an empty tree means it either did nothing or (the failure
 					// this guard exists to catch) operated on a different directory and its
-					// work was silently lost. Previously this was OR-gated with output
-					// length, so a chatty agent that escaped the worktree still "passed".
+					// work was silently lost.
+					//
+					// The check is commit-aware: changes are measured against the HEAD
+					// captured before the implementer ran, so an agent that commits its
+					// own work (clean tree, new commits) still passes. Previously only
+					// the uncommitted working tree was inspected, which false-positived
+					// on self-committing implementers.
+					const modified = preImplementationHead
+						? await getChangedFilesSince(workRoot, preImplementationHead)
+						: await getModifiedFiles(workRoot);
 					if (modified.length === 0) {
 						return (
-							`Implementer made no file changes in the worktree (${workRoot}). ` +
-							`Every implementation must edit files inside this directory. Verify the ` +
-							`agent ran its commands here and did not cd to another checkout.`
+							`Implementer made no file changes in the worktree (${workRoot}) — ` +
+							`no commits since ${preImplementationHead ?? "start"} and no uncommitted ` +
+							`changes. Every implementation must edit files inside this directory. ` +
+							`Verify the agent ran its commands here and did not cd to another checkout.`
 						);
 					}
 					return undefined;

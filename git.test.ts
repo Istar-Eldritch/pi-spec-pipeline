@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
 	extractCommitMessage,
 	captureGitStatus,
+	getChangedFilesSince,
+	getHeadCommit,
 	getModifiedFiles,
 	stageFiles,
 	hasChangesStaged,
@@ -236,6 +238,87 @@ describe("Git file tracking utilities", () => {
 			expect(files).toContain("file1.txt");
 			expect(files).toContain("file2.txt");
 			expect(files.length).toBe(3);
+		});
+	});
+
+	describe("getHeadCommit", () => {
+		it("returns the current HEAD hash", async () => {
+			const head = await getHeadCommit(testDir);
+			expect(head).toMatch(/^[0-9a-f]{40}$/);
+		});
+
+		it("returns undefined for a non-git directory", async () => {
+			const plainDir = await mkdtemp(join(tmpdir(), "not-a-repo-"));
+			try {
+				const head = await getHeadCommit(plainDir);
+				expect(head).toBeUndefined();
+			} finally {
+				await rm(plainDir, { recursive: true, force: true });
+			}
+		});
+
+		it("returns undefined for a repo with no commits (unborn HEAD)", async () => {
+			const emptyRepo = await mkdtemp(join(tmpdir(), "empty-repo-"));
+			try {
+				await execGit(emptyRepo, ["init"]);
+				const head = await getHeadCommit(emptyRepo);
+				expect(head).toBeUndefined();
+			} finally {
+				await rm(emptyRepo, { recursive: true, force: true });
+			}
+		});
+	});
+
+	describe("getChangedFilesSince", () => {
+		it("returns empty array when nothing changed since base", async () => {
+			const base = await getHeadCommit(testDir);
+			expect(base).toBeDefined();
+			const files = await getChangedFilesSince(testDir, base as string);
+			expect(files).toEqual([]);
+		});
+
+		it("detects uncommitted working tree changes", async () => {
+			const base = await getHeadCommit(testDir);
+			await writeFile(join(testDir, "README.md"), "# Modified\n");
+			const files = await getChangedFilesSince(testDir, base as string);
+			expect(files).toContain("README.md");
+		});
+
+		it("detects untracked files", async () => {
+			const base = await getHeadCommit(testDir);
+			await writeFile(join(testDir, "new-file.txt"), "New content\n");
+			const files = await getChangedFilesSince(testDir, base as string);
+			expect(files).toContain("new-file.txt");
+		});
+
+		it("detects changes that the agent committed itself (clean tree)", async () => {
+			// Regression: a self-committing implementer leaves a clean working
+			// tree, which getModifiedFiles reports as "no changes". Changes must
+			// still be detected relative to the pre-run HEAD.
+			const base = await getHeadCommit(testDir);
+			await writeFile(join(testDir, "feature.txt"), "Implemented\n");
+			await writeFile(join(testDir, "README.md"), "# Updated docs\n");
+			await execGit(testDir, ["add", "-A"]);
+			await execGit(testDir, ["commit", "-m", "feat(x): agent self-commit"]);
+
+			// Sanity: working tree is clean, old detector would see nothing
+			expect(await getModifiedFiles(testDir)).toEqual([]);
+
+			const files = await getChangedFilesSince(testDir, base as string);
+			expect(files).toContain("feature.txt");
+			expect(files).toContain("README.md");
+		});
+
+		it("combines committed and uncommitted changes since base", async () => {
+			const base = await getHeadCommit(testDir);
+			await writeFile(join(testDir, "committed.txt"), "Committed\n");
+			await execGit(testDir, ["add", "-A"]);
+			await execGit(testDir, ["commit", "-m", "feat(x): partial commit"]);
+			await writeFile(join(testDir, "pending.txt"), "Uncommitted\n");
+
+			const files = await getChangedFilesSince(testDir, base as string);
+			expect(files).toContain("committed.txt");
+			expect(files).toContain("pending.txt");
 		});
 	});
 
