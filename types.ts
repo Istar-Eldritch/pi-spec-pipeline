@@ -400,7 +400,6 @@ export interface PipelineUIContext {
 export const STATE_DIR = ".pi/spec-pipeline";
 export const IMPL_STATE_DIR = ".pi/spec-pipeline/implementations";
 export const STATE_FILE = "state.json";
-export const MAX_SPEC_ITERATIONS = 5;
 export const PIPELINE_WIDGET_ID = "spec-pipeline-status";
 
 // Roles that need write/edit access to modify files

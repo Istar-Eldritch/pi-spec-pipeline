@@ -380,4 +380,3 @@ Report:
 	} as const;
 }
 
-export type SystemPromptRoleName = keyof ReturnType<typeof createSystemPrompts>;
