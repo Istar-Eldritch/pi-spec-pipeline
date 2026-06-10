@@ -425,7 +425,10 @@ async function _runImplementPipelineInner(
 		const shortName = deriveShortName(state.specPath);
 
 		// Try to extract timestamp from spec filename, otherwise use implTimestamp
-		const specBasename = path.basename(state.specPath, path.extname(state.specPath));
+		const specBasename = path.basename(
+			state.specPath,
+			path.extname(state.specPath),
+		);
 		const timestampMatch = specBasename.match(/^(\d{10})/);
 		const specTimestamp = timestampMatch
 			? timestampMatch[1]

@@ -71,9 +71,12 @@ describe("resolveProjectRoot", () => {
 			// resolveProjectRoot from inside the worktree should return mainRepo
 			expect(resolveProjectRoot(worktreeDir)).toBe(mainRepo);
 		} finally {
-			await execGit(mainRepo, ["worktree", "remove", "--force", worktreeDir]).catch(
-				() => {},
-			);
+			await execGit(mainRepo, [
+				"worktree",
+				"remove",
+				"--force",
+				worktreeDir,
+			]).catch(() => {});
 			await execGit(mainRepo, ["branch", "-D", "test-resolve-branch"]).catch(
 				() => {},
 			);
@@ -186,10 +189,7 @@ describe("resolveAndValidateBasePath", () => {
 	});
 
 	it("rejects basePath inside .git (relative)", () => {
-		const result = resolveAndValidateBasePath(
-			".git/worktrees",
-			projectRoot,
-		);
+		const result = resolveAndValidateBasePath(".git/worktrees", projectRoot);
 		expect(result.ok).toBe(false);
 		if (!result.ok) {
 			expect(result.error).toContain(".git");
@@ -248,7 +248,11 @@ describe("ensureBasePathGitignore", () => {
 	it("is idempotent — does not overwrite an existing .gitignore", () => {
 		const subDir = path.join(baseDir, "worktrees");
 		fs.mkdirSync(subDir, { recursive: true });
-		fs.writeFileSync(path.join(subDir, ".gitignore"), "custom-content\n", "utf-8");
+		fs.writeFileSync(
+			path.join(subDir, ".gitignore"),
+			"custom-content\n",
+			"utf-8",
+		);
 
 		ensureBasePathGitignore(subDir);
 
@@ -445,9 +449,7 @@ describe("createWorktree", () => {
 		expect(result.ok).toBe(true);
 		if (!result.ok) return;
 
-		expect(result.meta.path).toBe(
-			path.join(relResolved, "feat-2606101218"),
-		);
+		expect(result.meta.path).toBe(path.join(relResolved, "feat-2606101218"));
 	});
 });
 
@@ -469,7 +471,9 @@ describe("runSetupScript", () => {
 		await rm(worktreeDir, { recursive: true, force: true });
 	});
 
-	function fakeMeta(worktreePath: string): Pick<WorktreeMetadata, "path" | "branch"> {
+	function fakeMeta(
+		worktreePath: string,
+	): Pick<WorktreeMetadata, "path" | "branch"> {
 		return { path: worktreePath, branch: "impl/test-2606101218" };
 	}
 
