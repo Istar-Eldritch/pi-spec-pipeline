@@ -7,16 +7,20 @@ import {
 	formatErrorForRetry,
 	formatErrorBox,
 } from "./errors.ts";
-import type { SpecState, ImplementationState, ErrorDetails } from "./types.ts";
+import type { ImplementationState, ErrorDetails } from "./types.ts";
 
 describe("classifyError", () => {
 	describe("RATE_LIMIT detection", () => {
 		it("detects HTTP 429 status code", () => {
-			expect(classifyError("Error: Request failed with status 429")).toBe("RATE_LIMIT");
+			expect(classifyError("Error: Request failed with status 429")).toBe(
+				"RATE_LIMIT",
+			);
 		});
 
 		it("detects 'rate limit' text", () => {
-			expect(classifyError("Rate limit exceeded. Please wait.")).toBe("RATE_LIMIT");
+			expect(classifyError("Rate limit exceeded. Please wait.")).toBe(
+				"RATE_LIMIT",
+			);
 		});
 
 		it("detects 'rate_limit' with underscore", () => {
@@ -24,7 +28,9 @@ describe("classifyError", () => {
 		});
 
 		it("detects 'ratelimit' as one word", () => {
-			expect(classifyError("RateLimitError: too many requests")).toBe("RATE_LIMIT");
+			expect(classifyError("RateLimitError: too many requests")).toBe(
+				"RATE_LIMIT",
+			);
 		});
 
 		it("detects 'too many requests'", () => {
@@ -48,11 +54,15 @@ describe("classifyError", () => {
 
 	describe("NETWORK detection", () => {
 		it("detects 'econnrefused'", () => {
-			expect(classifyError("Error: connect ECONNREFUSED 127.0.0.1:3000")).toBe("NETWORK");
+			expect(classifyError("Error: connect ECONNREFUSED 127.0.0.1:3000")).toBe(
+				"NETWORK",
+			);
 		});
 
 		it("detects 'enotfound'", () => {
-			expect(classifyError("Error: getaddrinfo ENOTFOUND api.example.com")).toBe("NETWORK");
+			expect(
+				classifyError("Error: getaddrinfo ENOTFOUND api.example.com"),
+			).toBe("NETWORK");
 		});
 
 		it("detects 'network' keyword", () => {
@@ -78,7 +88,9 @@ describe("classifyError", () => {
 		});
 
 		it("detects 'validation'", () => {
-			expect(classifyError("Validation error: missing field")).toBe("VALIDATION");
+			expect(classifyError("Validation error: missing field")).toBe(
+				"VALIDATION",
+			);
 		});
 
 		it("detects 'malformed'", () => {
@@ -96,7 +108,9 @@ describe("classifyError", () => {
 		});
 
 		it("detects 'model_context_window_exceeded'", () => {
-			expect(classifyError("model_context_window_exceeded")).toBe("TOKEN_LIMIT");
+			expect(classifyError("model_context_window_exceeded")).toBe(
+				"TOKEN_LIMIT",
+			);
 		});
 
 		it("detects 'max tokens'", () => {
@@ -106,7 +120,9 @@ describe("classifyError", () => {
 
 	describe("INCOMPLETE detection", () => {
 		it("detects 'aborted before completion'", () => {
-			expect(classifyError("agent aborted before completion")).toBe("INCOMPLETE");
+			expect(classifyError("agent aborted before completion")).toBe(
+				"INCOMPLETE",
+			);
 		});
 
 		it("detects 'did not complete'", () => {
@@ -145,7 +161,9 @@ describe("classifyError", () => {
 	describe("priority (first match wins)", () => {
 		// Rate limit should be detected even with other keywords present
 		it("detects rate limit with network keywords", () => {
-			expect(classifyError("Connection rate limit exceeded")).toBe("RATE_LIMIT");
+			expect(classifyError("Connection rate limit exceeded")).toBe(
+				"RATE_LIMIT",
+			);
 		});
 	});
 });
@@ -232,7 +250,9 @@ describe("truncateString", () => {
 });
 
 describe("formatErrorForRetry", () => {
-	function createMinimalState(overrides: Partial<ImplementationState> = {}): ImplementationState {
+	function createMinimalState(
+		overrides: Partial<ImplementationState> = {},
+	): ImplementationState {
 		return {
 			id: "test-id-123",
 			implTimestamp: "2602061200",
@@ -269,7 +289,7 @@ describe("formatErrorForRetry", () => {
 		const error = createError({ phase: 1 });
 		const state = createMinimalState();
 		(state as any).phases = undefined;
-		
+
 		expect(() => formatErrorForRetry(error, state)).not.toThrow();
 		const result = formatErrorForRetry(error, state);
 		// Should show "?" for unknown total phases
@@ -279,7 +299,7 @@ describe("formatErrorForRetry", () => {
 	it("handles state with empty phases array", () => {
 		const error = createError({ phase: 1 });
 		const state = createMinimalState({ phases: [] });
-		
+
 		expect(() => formatErrorForRetry(error, state)).not.toThrow();
 		const result = formatErrorForRetry(error, state);
 		expect(result).toContain("1 of ?");
@@ -289,7 +309,7 @@ describe("formatErrorForRetry", () => {
 		const error = createError();
 		delete (error as any).phase;
 		const state = createMinimalState();
-		
+
 		expect(() => formatErrorForRetry(error, state)).not.toThrow();
 	});
 
@@ -300,7 +320,7 @@ describe("formatErrorForRetry", () => {
 			cycle: 3,
 		});
 		const state = createMinimalState({ phases: ["p1.md", "p2.md", "p3.md"] });
-		
+
 		const result = formatErrorForRetry(error, state);
 		expect(result).toContain("opus");
 		expect(result).toContain("implementer");
@@ -309,7 +329,9 @@ describe("formatErrorForRetry", () => {
 });
 
 describe("formatErrorBox", () => {
-	function createMinimalState(overrides: Partial<ImplementationState> = {}): ImplementationState {
+	function createMinimalState(
+		overrides: Partial<ImplementationState> = {},
+	): ImplementationState {
 		return {
 			id: "test-id-123",
 			implTimestamp: "2602061200",
@@ -346,7 +368,7 @@ describe("formatErrorBox", () => {
 		const error = createError({ phase: 1 });
 		const state = createMinimalState();
 		(state as any).phases = undefined;
-		
+
 		expect(() => formatErrorBox(error, state)).not.toThrow();
 		const result = formatErrorBox(error, state);
 		expect(result).toContain("1 of ?");
@@ -357,7 +379,7 @@ describe("formatErrorBox", () => {
 			stderr: "Error: Something went wrong\nStack trace here",
 		});
 		const state = createMinimalState();
-		
+
 		const result = formatErrorBox(error, state);
 		expect(result).toContain("Error Message");
 		expect(result).toContain("Something went wrong");
@@ -373,7 +395,7 @@ describe("formatErrorBox", () => {
 			agentTask: "review task",
 		};
 		const state = createMinimalState();
-		
+
 		expect(() => formatErrorBox(error, state)).not.toThrow();
 		const result = formatErrorBox(error, state);
 		expect(result).toContain("gpt-5.4");

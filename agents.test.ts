@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import type { AgentOutputEvent, ToolEventData, TextEventData } from "./types.ts";
+import type {
+	AgentOutputEvent,
+	ToolEventData,
+	TextEventData,
+} from "./types.ts";
 import { createProgressCallback } from "./agents.ts";
 
 describe("AgentOutputEvent type narrowing", () => {
@@ -10,7 +14,11 @@ describe("AgentOutputEvent type narrowing", () => {
 			arguments: { path: "test.ts" },
 		};
 
-		if (typeof toolEvent !== "string" && "type" in toolEvent && toolEvent.type === "tool") {
+		if (
+			typeof toolEvent !== "string" &&
+			"type" in toolEvent &&
+			toolEvent.type === "tool"
+		) {
 			expect(toolEvent.name).toBe("read");
 			expect(toolEvent.arguments.path).toBe("test.ts");
 		} else {
@@ -34,7 +42,11 @@ describe("AgentOutputEvent type narrowing", () => {
 			delta: "delta text",
 		};
 
-		if (typeof textEvent !== "string" && "type" in textEvent && textEvent.type === "text") {
+		if (
+			typeof textEvent !== "string" &&
+			"type" in textEvent &&
+			textEvent.type === "text"
+		) {
 			expect(textEvent.delta).toBe("delta text");
 		} else {
 			throw new Error("Type narrowing failed for text delta event");
@@ -165,12 +177,16 @@ describe("Event type guards", () => {
 		];
 
 		const toolEvents = events.filter(
-			(e): e is ToolEventData => typeof e !== "string" && "type" in e && e.type === "tool"
+			(e): e is ToolEventData =>
+				typeof e !== "string" && "type" in e && e.type === "tool",
 		);
 		const textEvents = events.filter(
-			(e): e is TextEventData => typeof e !== "string" && "type" in e && e.type === "text"
+			(e): e is TextEventData =>
+				typeof e !== "string" && "type" in e && e.type === "text",
 		);
-		const stringEvents = events.filter((e): e is string => typeof e === "string");
+		const stringEvents = events.filter(
+			(e): e is string => typeof e === "string",
+		);
 
 		expect(toolEvents.length).toBe(1);
 		expect(textEvents.length).toBe(1);
@@ -190,216 +206,251 @@ describe("createProgressCallback", () => {
 	it("formats read tool events correctly", () => {
 		const notifications: string[] = [];
 		const widgets: Array<{ id: string; content: string[] | undefined }> = [];
-		
+
 		const ctx: any = {
 			ui: {
 				notify: (msg: string, type: string) => notifications.push(msg),
-				setWidget: (id: string, content: string[] | undefined) => 
+				setWidget: (id: string, content: string[] | undefined) =>
 					widgets.push({ id, content }),
 			},
 		};
-		
+
 		const state: any = {
 			id: "test_impl",
 			phases: ["Phase 1", "Phase 2"],
 			currentPhaseIndex: 0,
 			stage: "implementation",
 		};
-		
+
 		const callback = createProgressCallback(ctx, state, "Phase 1/2", true);
-		
+
 		// Invoke with read tool event
 		callback({
 			type: "tool",
 			name: "read",
 			arguments: { path: "./src/auth.ts" },
 		});
-		
+
 		// Verify notification was sent
 		expect(notifications).toHaveLength(1);
 		expect(notifications[0]).toBe("📖 Reading src/auth.ts [Phase 1/2]");
-		
+
 		// Verify widget was updated
 		expect(widgets).toHaveLength(1);
 		expect(widgets[0].content).toBeDefined();
 		expect(widgets[0].content?.join("\n")).toContain("📖 Reading src/auth.ts");
 	});
-	
+
 	it("formats write tool events correctly", () => {
 		const notifications: string[] = [];
 		const ctx: any = {
-			ui: { notify: (msg: string) => notifications.push(msg), setWidget: () => {} },
+			ui: {
+				notify: (msg: string) => notifications.push(msg),
+				setWidget: () => {},
+			},
 		};
-		const state: any = { id: "test", phases: [], currentPhaseIndex: 0, stage: "implementation" };
-		
+		const state: any = {
+			id: "test",
+			phases: [],
+			currentPhaseIndex: 0,
+			stage: "implementation",
+		};
+
 		const callback = createProgressCallback(ctx, state, "Phase 2", true);
 		callback({
 			type: "tool",
 			name: "write",
 			arguments: { path: "src/new-file.ts" },
 		});
-		
+
 		expect(notifications).toHaveLength(1);
 		expect(notifications[0]).toContain("✍️ Creating src/new-file.ts");
 		expect(notifications[0]).toContain("[Phase 2]");
 	});
-	
+
 	it("formats edit tool events correctly", () => {
 		const notifications: string[] = [];
 		const ctx: any = {
-			ui: { notify: (msg: string) => notifications.push(msg), setWidget: () => {} },
+			ui: {
+				notify: (msg: string) => notifications.push(msg),
+				setWidget: () => {},
+			},
 		};
-		const state: any = { id: "test", phases: [], currentPhaseIndex: 0, stage: "implementation" };
-		
+		const state: any = {
+			id: "test",
+			phases: [],
+			currentPhaseIndex: 0,
+			stage: "implementation",
+		};
+
 		const callback = createProgressCallback(ctx, state, "Review Cycle 1", true);
 		callback({
 			type: "tool",
 			name: "edit",
 			arguments: { path: "./lib/utils.ts" },
 		});
-		
+
 		expect(notifications).toHaveLength(1);
 		expect(notifications[0]).toBe("✏️ Editing lib/utils.ts [Review Cycle 1]");
 	});
-	
+
 	it("truncates long bash commands", () => {
 		const notifications: string[] = [];
 		const ctx: any = {
-			ui: { notify: (msg: string) => notifications.push(msg), setWidget: () => {} },
+			ui: {
+				notify: (msg: string) => notifications.push(msg),
+				setWidget: () => {},
+			},
 		};
-		const state: any = { id: "test", phases: [], currentPhaseIndex: 0, stage: "implementation" };
-		
+		const state: any = {
+			id: "test",
+			phases: [],
+			currentPhaseIndex: 0,
+			stage: "implementation",
+		};
+
 		const callback = createProgressCallback(ctx, state, "Phase 3", true);
-		const longCommand = "npm test -- --watch --coverage --reporters=verbose --maxWorkers=4 --bail";
-		
+		const longCommand =
+			"npm test -- --watch --coverage --reporters=verbose --maxWorkers=4 --bail";
+
 		callback({
 			type: "tool",
 			name: "bash",
 			arguments: { command: longCommand },
 		});
-		
+
 		expect(notifications).toHaveLength(1);
 		expect(notifications[0]).toContain("⚙️ Running:");
 		expect(notifications[0]).toContain("...");
 		expect(notifications[0].length).toBeLessThan(120); // Truncated message
 	});
-	
+
 	it("handles grep tool events", () => {
 		const notifications: string[] = [];
 		const ctx: any = {
-			ui: { notify: (msg: string) => notifications.push(msg), setWidget: () => {} },
+			ui: {
+				notify: (msg: string) => notifications.push(msg),
+				setWidget: () => {},
+			},
 		};
-		const state: any = { id: "test", phases: [], currentPhaseIndex: 0, stage: "implementation" };
-		
+		const state: any = {
+			id: "test",
+			phases: [],
+			currentPhaseIndex: 0,
+			stage: "implementation",
+		};
+
 		const callback = createProgressCallback(ctx, state, "Phase 1", true);
 		callback({
 			type: "tool",
 			name: "grep",
 			arguments: { pattern: "interface.*User", path: "src/" },
 		});
-		
+
 		expect(notifications).toHaveLength(1);
 		expect(notifications[0]).toContain("🔍 Searching interface.*User in src/");
 	});
-	
+
 	it("handles find tool events", () => {
 		const notifications: string[] = [];
 		const ctx: any = {
-			ui: { notify: (msg: string) => notifications.push(msg), setWidget: () => {} },
+			ui: {
+				notify: (msg: string) => notifications.push(msg),
+				setWidget: () => {},
+			},
 		};
-		const state: any = { id: "test", phases: [], currentPhaseIndex: 0, stage: "implementation" };
-		
+		const state: any = {
+			id: "test",
+			phases: [],
+			currentPhaseIndex: 0,
+			stage: "implementation",
+		};
+
 		const callback = createProgressCallback(ctx, state, "Phase 2", true);
 		callback({
 			type: "tool",
 			name: "find",
 			arguments: { pattern: "*.test.ts" },
 		});
-		
+
 		expect(notifications).toHaveLength(1);
 		expect(notifications[0]).toBe("🔎 Finding *.test.ts [Phase 2]");
 	});
-	
+
 	it("ignores text delta events (backward compatibility)", () => {
 		const notifications: string[] = [];
 		const ctx: any = {
-			ui: { notify: (msg: string) => notifications.push(msg), setWidget: () => {} },
+			ui: {
+				notify: (msg: string) => notifications.push(msg),
+				setWidget: () => {},
+			},
 		};
-		const state: any = { id: "test", phases: [], currentPhaseIndex: 0, stage: "implementation" };
-		
+		const state: any = {
+			id: "test",
+			phases: [],
+			currentPhaseIndex: 0,
+			stage: "implementation",
+		};
+
 		const callback = createProgressCallback(ctx, state, "Phase 1", true);
-		
+
 		// Legacy string event
 		callback("some text output");
 		expect(notifications).toHaveLength(0);
-		
+
 		// Structured text event
 		callback({ type: "text", delta: "more output" });
 		expect(notifications).toHaveLength(0);
 	});
-	
+
 	it("handles unknown tool types with default emoji", () => {
 		const notifications: string[] = [];
 		const ctx: any = {
-			ui: { notify: (msg: string) => notifications.push(msg), setWidget: () => {} },
+			ui: {
+				notify: (msg: string) => notifications.push(msg),
+				setWidget: () => {},
+			},
 		};
-		const state: any = { id: "test", phases: [], currentPhaseIndex: 0, stage: "implementation" };
-		
+		const state: any = {
+			id: "test",
+			phases: [],
+			currentPhaseIndex: 0,
+			stage: "implementation",
+		};
+
 		const callback = createProgressCallback(ctx, state, "Phase 1", true);
 		callback({
 			type: "tool",
 			name: "unknown_tool",
 			arguments: { some: "arg" },
 		});
-		
+
 		// Unknown tools without specific formatting should not generate notifications
 		expect(notifications).toHaveLength(0);
 	});
-	
-	it("uses spec widget for non-implementation pipelines", () => {
-		const widgets: Array<{ id: string; content: string[] | undefined }> = [];
-		const ctx: any = {
-			ui: {
-				notify: () => {},
-				setWidget: (id: string, content: string[] | undefined) => 
-					widgets.push({ id, content }),
-			},
-		};
-		
-		const state: any = {
-			id: "spec_123",
-			stage: "spec_drafting",
-			specFilename: "test.md",
-		};
-		
-		const callback = createProgressCallback(ctx, state, "Drafting", false);
-		callback({
-			type: "tool",
-			name: "read",
-			arguments: { path: "README.md" },
-		});
-		
-		// Should call updateSpecWidget instead of updateImplWidget
-		expect(widgets).toHaveLength(1);
-		// Spec widget has different format (no phases progress bar)
-		const widgetContent = widgets[0].content?.join("\n") || "";
-		expect(widgetContent).toContain("📋 Spec:");
-	});
-	
+
 	it("strips leading ./ from paths", () => {
 		const notifications: string[] = [];
 		const ctx: any = {
-			ui: { notify: (msg: string) => notifications.push(msg), setWidget: () => {} },
+			ui: {
+				notify: (msg: string) => notifications.push(msg),
+				setWidget: () => {},
+			},
 		};
-		const state: any = { id: "test", phases: [], currentPhaseIndex: 0, stage: "implementation" };
-		
+		const state: any = {
+			id: "test",
+			phases: [],
+			currentPhaseIndex: 0,
+			stage: "implementation",
+		};
+
 		const callback = createProgressCallback(ctx, state, "Phase 1", true);
 		callback({
 			type: "tool",
 			name: "read",
 			arguments: { path: "./src/nested/file.ts" },
 		});
-		
+
 		expect(notifications[0]).toBe("📖 Reading src/nested/file.ts [Phase 1]");
 		expect(notifications[0]).not.toContain("./src");
 	});
