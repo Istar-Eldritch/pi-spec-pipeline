@@ -1227,17 +1227,43 @@ Make the necessary fixes.`,
 		);
 	}
 
+	if (state.worktree) {
+		completionLines.push("");
+		completionLines.push("  🌿 Worktree:");
+		completionLines.push(formatKeyValue("  Branch", state.worktree.branch));
+		completionLines.push(formatKeyValue("  Worktree", state.worktree.path));
+	}
+
 	completionLines.push("");
 	completionLines.push("  📋 Next Steps:");
-	completionLines.push("     • Review the implementation changes");
-	if (projectConfig.testCommand) {
-		completionLines.push("     • Run tests: " + projectConfig.testCommand);
+	if (state.worktree) {
+		completionLines.push("     • cd " + state.worktree.path);
+		completionLines.push("     • Review the implementation changes");
+		if (projectConfig.testCommand) {
+			completionLines.push("     • Run tests: " + projectConfig.testCommand);
+		} else {
+			completionLines.push("     • Run your project's test suite");
+		}
+		completionLines.push(
+			"     • Merge: git merge " + state.worktree.branch + " (or open a PR)",
+		);
+		completionLines.push(
+			"     • Cleanup: git worktree remove " + state.worktree.path,
+		);
+		completionLines.push(
+			"     •           git branch -d " + state.worktree.branch,
+		);
 	} else {
-		completionLines.push("     • Run your project's test suite");
+		completionLines.push("     • Review the implementation changes");
+		if (projectConfig.testCommand) {
+			completionLines.push("     • Run tests: " + projectConfig.testCommand);
+		} else {
+			completionLines.push("     • Run your project's test suite");
+		}
+		completionLines.push(
+			"     • Run /implement-metrics to export comparison data",
+		);
 	}
-	completionLines.push(
-		"     • Run /implement-metrics to export comparison data",
-	);
 	completionLines.push("");
 	completionLines.push(formatDivider(50));
 

@@ -325,6 +325,9 @@ export async function handleAgentError(
 	notifyLines.push("");
 	notifyLines.push(`📁 Error log: .pi/spec-pipeline/${state.id}.error.log`);
 	notifyLines.push(`🔍 Details: /spec-error`);
+	if (state.worktree?.path) {
+		notifyLines.push(`🌿 Worktree: ${state.worktree.path}`);
+	}
 
 	notify(notifyLines.join("\n"), "error");
 

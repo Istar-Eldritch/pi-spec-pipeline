@@ -237,6 +237,74 @@ describe("formatImplState", () => {
 	});
 });
 
+describe("formatImplState worktree", () => {
+	function createMinimalImplState(
+		overrides: Partial<ImplementationState> = {},
+	): ImplementationState {
+		return {
+			id: "test-impl-worktree",
+			implTimestamp: "2606101218",
+			specPath: "docs/test_spec.md",
+			specContent: "",
+			stage: "implementation",
+			createdAt: "2026-06-10T12:18:00.000Z",
+			updatedAt: "2026-06-10T12:18:00.000Z",
+			phases: ["phase1.md"],
+			phasesGenerated: [true],
+			currentPhaseIndex: 0,
+			currentReviewCycle: 1,
+			previousReview: "",
+			phaseCommits: [],
+			...overrides,
+		};
+	}
+
+	it("shows Branch and Worktree lines in Git section when state.worktree is set", () => {
+		const state = createMinimalImplState({
+			worktree: {
+				path: "/tmp/worktrees/myfeature-2606101218",
+				branch: "impl/myfeature-2606101218",
+				baseCommit: "abc123def456",
+				createdAt: "2026-06-10T12:18:00.000Z",
+				setupScriptRan: true,
+			},
+		});
+		const result = formatImplState(state);
+		expect(result).toContain("Branch");
+		expect(result).toContain("impl/myfeature-2606101218");
+		expect(result).toContain("Worktree");
+		expect(result).toContain("/tmp/worktrees/myfeature-2606101218");
+		// Should appear under the Git section
+		expect(result).toContain("📦 Git");
+	});
+
+	it("does not show Branch/Worktree lines when state.worktree is absent", () => {
+		const state = createMinimalImplState();
+		// No worktree, no checkpoints, no errorStash → no Git section at all
+		const result = formatImplState(state);
+		expect(result).not.toContain("impl/");
+		expect(result).not.toContain("Worktree");
+	});
+
+	it("shows Branch/Worktree in Git section alongside checkpoints", () => {
+		const state = createMinimalImplState({
+			checkpoints: ["sha1", "sha2"],
+			worktree: {
+				path: "/tmp/worktrees/feat-2606101218",
+				branch: "impl/feat-2606101218",
+				baseCommit: "abc123",
+				createdAt: "2026-06-10T12:18:00.000Z",
+				setupScriptRan: false,
+			},
+		});
+		const result = formatImplState(state);
+		expect(result).toContain("📦 Git");
+		expect(result).toContain("Commits");
+		expect(result).toContain("Branch");
+		expect(result).toContain("Worktree");
+	});
+});
+
 describe("updateImplWidget", () => {
 	it("handles state with undefined phases", () => {
 		const state = {

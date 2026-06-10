@@ -88,6 +88,18 @@ import {
 	type PipelineRoots,
 } from "./implement-pipeline.ts";
 
+// Import worktree operations
+import {
+	resolveProjectRoot,
+	deriveShortName,
+	resolveAndValidateBasePath,
+	ensureBasePathGitignore,
+	createWorktree,
+	runSetupScript,
+	verifyWorktree,
+	recreateWorktree,
+} from "./worktree.ts";
+
 // Import system prompts
 import { createSystemPrompts, buildPromptOptions } from "./agents-config.ts";
 
@@ -198,24 +210,27 @@ export default function (pi: ExtensionAPI) {
 				// Move autoMode into the closure scope so other functions can read it (if needed)
 				const isAutoMode = autoMode;
 
-				// Check for existing active implementation
-				const existingPipeline = getLatestActiveImplPipeline(cwd);
+				// Resolve project root (handles the case where cwd is already a worktree)
+				const projectRoot = resolveProjectRoot(cwd);
+
+				// Check for existing active implementation (keyed to projectRoot)
+				const existingPipeline = getLatestActiveImplPipeline(projectRoot);
 				if (existingPipeline && !isAutoMode) {
-					const resume = await ctx.ui.confirm(
-						"Active Implementation Found",
-						`There's an active implementation:\n${formatImplState(existingPipeline)}\n\nStart a NEW implementation? (No = cancel)`,
+					const start = await ctx.ui.confirm(
+						"Start New Implementation?",
+						`An implementation is already active:\n${formatImplState(existingPipeline)}\n\nEach /implement run creates its own isolated worktree, so parallel implementations are supported.\n\nStart a new implementation?`,
 					);
-					if (!resume) {
+					if (!start) {
 						ctx.ui.notify(
-							"Use /implement-resume to continue the existing implementation",
+							"Existing implementation continues. Use /implement-resume to continue it.",
 							"info",
 						);
 						return;
 					}
 				} else if (existingPipeline && isAutoMode) {
-					// Auto-mode: skip over existing pipeline detection; start fresh
+					// Auto-mode: start a new parallel implementation
 					ctx.ui.notify(
-						"Auto-mode: overriding existing pipeline (starting fresh)",
+						"Auto-mode: starting new parallel implementation",
 						"info",
 					);
 				}
@@ -227,23 +242,25 @@ export default function (pi: ExtensionAPI) {
 					return;
 				}
 
+				// Dirty-tree warning only (FR-2.6): uncommitted changes in the
+				// triggering checkout are not included — the worktree starts from HEAD.
 				const gitClean = await checkGitClean(cwd);
 				if (!gitClean.clean) {
 					ctx.ui.notify(
-						"Working directory has uncommitted changes. Please commit or stash first.",
-						"error",
+						"⚠️ Uncommitted changes in the triggering checkout will NOT be included in the implementation — only the committed HEAD is used as the worktree base.",
+						"warning",
 					);
 					if (gitClean.status) {
 						ctx.ui.notify(
-							`Changed files:\n${gitClean.status.slice(0, 500)}`,
+							`Changed files (not included):\n${gitClean.status.slice(0, 500)}`,
 							"info",
 						);
 					}
-					return;
+					// Do NOT return — proceed with worktree creation from HEAD
 				}
 
-				// Load config
-				const configResult = loadPipelineConfig(cwd);
+				// Load config from projectRoot (FR-4.4)
+				const configResult = loadPipelineConfig(projectRoot);
 				if (!configResult.success) {
 					ctx.ui.notify(configResult.error, "error");
 					return;
@@ -282,7 +299,7 @@ export default function (pi: ExtensionAPI) {
 				// Generate timestamp and names
 				const implTimestamp = generateTimestamp();
 
-				// Create initial state
+				// Create initial state (saved to projectRoot)
 				const state = createInitialImplState(
 					relativeSpecPath,
 					specContent,
@@ -291,7 +308,7 @@ export default function (pi: ExtensionAPI) {
 				);
 
 				state.checkpoints = [];
-				saveImplState(cwd, state);
+				saveImplState(projectRoot, state);
 
 				ctx.ui.notify(
 					formatStepBanner("IMPLEMENTATION STARTED", `ID: ${state.id}`, "🚀"),
@@ -299,10 +316,124 @@ export default function (pi: ExtensionAPI) {
 				);
 				ctx.ui.notify(`Spec: ${relativeSpecPath}`, "info");
 
+				// ============================================================
+				// WORKTREE CREATION (FR-2.4, FR-2.7)
+				// ============================================================
+				const shortName = deriveShortName(relativeSpecPath);
+				const basePathResult = resolveAndValidateBasePath(
+					projectConfig.worktree.basePath,
+					projectRoot,
+				);
+				if (!basePathResult.ok) {
+					state.lastError = {
+						timestamp: new Date().toISOString(),
+						agent: "worktree-setup",
+						role: "implementer",
+						exitCode: 1,
+						stderr: basePathResult.error,
+						errorType: "VALIDATION",
+						agentTask: "Validate worktree base path",
+					};
+					saveImplState(projectRoot, state);
+					ctx.ui.notify(
+						`Worktree setup failed: ${basePathResult.error}`,
+						"error",
+					);
+					return;
+				}
+
+				ensureBasePathGitignore(basePathResult.resolvedBase);
+
+				ctx.ui.notify("Creating implementation worktree...", "info");
+				const worktreeResult = await createWorktree(
+					cwd, // triggeringCwd (for reading HEAD)
+					projectRoot,
+					shortName,
+					implTimestamp,
+					basePathResult.resolvedBase,
+				);
+
+				if (!worktreeResult.ok) {
+					state.lastError = {
+						timestamp: new Date().toISOString(),
+						agent: "worktree-setup",
+						role: "implementer",
+						exitCode: 1,
+						stderr: worktreeResult.error,
+						errorType: "VALIDATION",
+						agentTask: "Create git worktree",
+					};
+					saveImplState(projectRoot, state);
+					ctx.ui.notify(
+						`Failed to create worktree: ${worktreeResult.error}`,
+						"error",
+					);
+					return;
+				}
+
+				const worktreeMeta = worktreeResult.meta;
+
+				// Persist worktree metadata immediately (FR-5.1)
+				state.worktree = { ...worktreeMeta };
+				saveImplState(projectRoot, state);
+
+				ctx.ui.notify(
+					`✅ Worktree: ${worktreeMeta.path}\n   Branch: ${worktreeMeta.branch}`,
+					"info",
+				);
+
+				const workRoot = worktreeMeta.path;
+
+				// ============================================================
+				// SETUP SCRIPT (FR-3.4, FR-3.7)
+				// ============================================================
+				if (projectConfig.worktree.setupScript) {
+					ctx.ui.notify("🔧 Running setup script...", "info");
+					const scriptResult = await runSetupScript(
+						projectConfig.worktree.setupScript,
+						worktreeMeta,
+						projectRoot,
+						state.id,
+					);
+
+					if (!scriptResult.ok) {
+						state.lastError = {
+							timestamp: new Date().toISOString(),
+							agent: "setup-script",
+							role: "implementer",
+							exitCode: scriptResult.exitCode,
+							stderr: scriptResult.outputTail,
+							errorType: "VALIDATION",
+							agentTask: "Run worktree setup script",
+						};
+						saveImplState(projectRoot, state);
+						ctx.ui.notify(
+							[
+								`❌ Setup script failed (exit code ${scriptResult.exitCode}).`,
+								"",
+								"Last output:",
+								scriptResult.outputTail,
+								"",
+								`Full log: ${scriptResult.logPath}`,
+								"",
+								`Worktree kept at: ${worktreeMeta.path}`,
+								"Fix the issue and use /implement-resume to retry the setup script.",
+							].join("\n"),
+							"error",
+						);
+						return;
+					}
+
+					ctx.ui.notify("✅ Setup script completed.", "success");
+				}
+
+				// Mark setup as done (no script = trivially done)
+				state.worktree = { ...state.worktree!, setupScriptRan: true };
+				saveImplState(projectRoot, state);
+
 				updateImplWidget(ctx, state, "Initializing...");
 
-				// Phase 3: legacy mode — both roots equal the triggering checkout.
-				const roots: PipelineRoots = { projectRoot: cwd, workRoot: cwd };
+				const roots: PipelineRoots = { projectRoot, workRoot };
 				await runImplementPipeline(state, roots, projectConfig, ctx);
 			} else {
 				ctx.ui.notify(
@@ -326,17 +457,18 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			const cwd = ctx.cwd;
+			const projectRoot = resolveProjectRoot(cwd);
 			const pipelineId = (args || "").trim();
 
 			let state: ImplementationState | null;
 			if (pipelineId) {
-				state = loadImplState(cwd, pipelineId);
+				state = loadImplState(projectRoot, pipelineId);
 				if (!state) {
 					ctx.ui.notify(`Implementation not found: ${pipelineId}`, "error");
 					return;
 				}
 			} else {
-				state = getLatestActiveImplPipeline(cwd);
+				state = getLatestActiveImplPipeline(projectRoot);
 				if (!state) {
 					ctx.ui.notify(
 						"No active implementation found. Use /implement to start one.",
@@ -373,43 +505,182 @@ export default function (pi: ExtensionAPI) {
 					// so always resume into "implementation" stage
 					state.stage = "implementation";
 				}
-				saveImplState(cwd, state);
+				saveImplState(projectRoot, state);
 			}
 
-			// Git validation
+			// Git validation on the triggering checkout
 			const gitValidation = await validateGitRepo(cwd);
 			if (!gitValidation.valid) {
 				ctx.ui.notify(gitValidation.error!, "error");
 				return;
 			}
 
-			const gitClean = await checkGitClean(cwd);
-			if (!gitClean.clean) {
-				ctx.ui.notify(
-					"Working directory has uncommitted changes. Please commit or stash first.",
-					"error",
-				);
-				if (gitClean.status) {
-					ctx.ui.notify(
-						`Changed files:\n${gitClean.status.slice(0, 500)}`,
-						"info",
-					);
-				}
+			// Load config from projectRoot (FR-4.4)
+			const configResult = loadPipelineConfig(projectRoot);
+			if (!configResult.success) {
+				ctx.ui.notify(configResult.error, "error");
 				return;
 			}
+			const projectConfig = configResult.config;
 
-			// Clean up error stash if present
-			if (state.errorStash) {
-				const stashStillExists = await stashExists(cwd, state.errorStash);
-				if (stashStillExists) {
+			// ============================================================
+			// WORKTREE RESUME DECISION (FR-5.3–5.6)
+			// ============================================================
+			let workRoot: string;
+
+			if (!state.worktree) {
+				// ---- Legacy branch (no worktree metadata) ----
+				// workRoot = projectRoot; preserve the dirty-tree hard error (NFR-1)
+				workRoot = projectRoot;
+
+				const gitClean = await checkGitClean(projectRoot);
+				if (!gitClean.clean) {
 					ctx.ui.notify(
-						"Dropping stashed changes from previous error...",
+						"Working directory has uncommitted changes. Please commit or stash first.",
+						"error",
+					);
+					if (gitClean.status) {
+						ctx.ui.notify(
+							`Changed files:\n${gitClean.status.slice(0, 500)}`,
+							"info",
+						);
+					}
+					return;
+				}
+
+				// Clean up error stash from projectRoot
+				if (state.errorStash) {
+					const stashStillExists = await stashExists(
+						projectRoot,
+						state.errorStash,
+					);
+					if (stashStillExists) {
+						ctx.ui.notify(
+							"Dropping stashed changes from previous error...",
+							"info",
+						);
+						await dropStash(projectRoot, state.errorStash);
+					}
+					state.errorStash = undefined;
+					saveImplState(projectRoot, state);
+				}
+			} else {
+				// ---- Worktree branch ----
+				workRoot = state.worktree.path;
+
+				// Verify worktree is still usable (FR-5.3)
+				const wtOk = await verifyWorktree(state.worktree);
+				if (!wtOk) {
+					// Attempt to recreate; recreateWorktree checks branch existence first
+					ctx.ui.notify(
+						"Worktree directory is missing or invalid, attempting to recreate...",
 						"info",
 					);
-					await dropStash(cwd, state.errorStash);
+					const recreateResult = await recreateWorktree(
+						projectRoot,
+						state.worktree,
+					);
+					if (!recreateResult.ok) {
+						// Branch may be gone — direct user to a fresh run
+						ctx.ui.notify(
+							`Cannot resume: ${recreateResult.error}\n\nStart a fresh /implement run to continue.`,
+							"error",
+						);
+						return;
+					}
+
+					// Worktree was recreated — mark setup script as needing re-run (FR-5.4)
+					state.worktree = { ...state.worktree, setupScriptRan: false };
+					saveImplState(projectRoot, state);
+					ctx.ui.notify("✅ Worktree recreated successfully.", "success");
 				}
-				state.errorStash = undefined;
-				saveImplState(cwd, state);
+
+				// checkGitClean on workRoot (the worktree) (FR-5.3)
+				const wtClean = await checkGitClean(workRoot);
+				if (!wtClean.clean) {
+					ctx.ui.notify(
+						"Worktree has uncommitted changes. Please commit or stash first.",
+						"error",
+					);
+					if (wtClean.status) {
+						ctx.ui.notify(
+							`Changed files:\n${wtClean.status.slice(0, 500)}`,
+							"info",
+						);
+					}
+					return;
+				}
+
+				// Clean up error stash from workRoot (FR-5.3)
+				if (state.errorStash) {
+					const stashStillExists = await stashExists(
+						workRoot,
+						state.errorStash,
+					);
+					if (stashStillExists) {
+						ctx.ui.notify(
+							"Dropping stashed changes from previous error...",
+							"info",
+						);
+						await dropStash(workRoot, state.errorStash);
+					}
+					state.errorStash = undefined;
+					saveImplState(projectRoot, state);
+				}
+
+				// Re-run setup script if it never completed (FR-5.5)
+				if (
+					!state.worktree.setupScriptRan &&
+					projectConfig.worktree.setupScript
+				) {
+					ctx.ui.notify(
+						"🔧 Re-running setup script (previous run did not complete)...",
+						"info",
+					);
+					const scriptResult = await runSetupScript(
+						projectConfig.worktree.setupScript,
+						state.worktree,
+						projectRoot,
+						state.id,
+					);
+
+					if (!scriptResult.ok) {
+						state.lastError = {
+							timestamp: new Date().toISOString(),
+							agent: "setup-script",
+							role: "implementer",
+							exitCode: scriptResult.exitCode,
+							stderr: scriptResult.outputTail,
+							errorType: "VALIDATION",
+							agentTask: "Run worktree setup script",
+						};
+						saveImplState(projectRoot, state);
+						ctx.ui.notify(
+							[
+								`❌ Setup script failed (exit code ${scriptResult.exitCode}).`,
+								"",
+								"Last output:",
+								scriptResult.outputTail,
+								"",
+								`Full log: ${scriptResult.logPath}`,
+							].join("\n"),
+							"error",
+						);
+						return;
+					}
+
+					// Success: clear any previous setup-script lastError (FR-5.5)
+					if (
+						state.lastError &&
+						typeof state.lastError === "object" &&
+						state.lastError.agent === "setup-script"
+					) {
+						state.lastError = undefined;
+					}
+					state.worktree = { ...state.worktree, setupScriptRan: true };
+					saveImplState(projectRoot, state);
+					ctx.ui.notify("✅ Setup script completed successfully.", "success");
+				}
 			}
 
 			ctx.ui.notify(
@@ -424,13 +695,6 @@ export default function (pi: ExtensionAPI) {
 
 			updateImplWidget(ctx, state, "Resuming...");
 
-			const configResult = loadPipelineConfig(cwd);
-			if (!configResult.success) {
-				ctx.ui.notify(configResult.error, "error");
-				return;
-			}
-			const projectConfig = configResult.config;
-
 			// Handle error retry
 			if (state.lastError) {
 				if (typeof state.lastError === "string") {
@@ -439,7 +703,7 @@ export default function (pi: ExtensionAPI) {
 						"warning",
 					);
 					state.lastError = undefined;
-					saveImplState(cwd, state);
+					saveImplState(projectRoot, state);
 				} else if (state.lastError.agentTask) {
 					const errorDisplay = formatErrorForRetry(state.lastError, state);
 					ctx.ui.notify(errorDisplay, "info");
@@ -456,11 +720,12 @@ export default function (pi: ExtensionAPI) {
 
 					const errPhase = state.lastError.phase;
 					const errCycle = state.lastError.cycle;
+					const retryRoots: PipelineRoots = { projectRoot, workRoot };
 					const retrySuccess = await retryFailedOperation(
 						state,
-						{ projectRoot: cwd, workRoot: cwd } satisfies PipelineRoots,
+						retryRoots,
 						projectConfig,
-						() => saveImplState(cwd, state),
+						() => saveImplState(projectRoot, state),
 						ctx,
 						{
 							config: getEscalatedModelConfig(
@@ -469,7 +734,7 @@ export default function (pi: ExtensionAPI) {
 							),
 							onEscalate: ({ role, fromModel, toModel, reason }) =>
 								recordEscalation(
-									cwd,
+									projectRoot,
 									state,
 									{
 										role,
@@ -479,7 +744,7 @@ export default function (pi: ExtensionAPI) {
 										toModel,
 										reason,
 									},
-									() => saveImplState(cwd, state),
+									() => saveImplState(projectRoot, state),
 									(msg, type) => ctx.ui.notify(msg, type),
 								),
 						},
@@ -496,12 +761,11 @@ export default function (pi: ExtensionAPI) {
 					ctx.ui.notify("Retry successful! Continuing pipeline...", "success");
 				} else {
 					state.lastError = undefined;
-					saveImplState(cwd, state);
+					saveImplState(projectRoot, state);
 				}
 			}
 
-			// Phase 3: legacy mode — both roots equal the triggering checkout.
-			const resumeRoots: PipelineRoots = { projectRoot: cwd, workRoot: cwd };
+			const resumeRoots: PipelineRoots = { projectRoot, workRoot };
 			await runImplementPipeline(state, resumeRoots, projectConfig, ctx);
 		},
 	});
@@ -591,6 +855,10 @@ export default function (pi: ExtensionAPI) {
 						`   Phases: ${state.currentPhaseIndex + 1}/${phases.length}`,
 					);
 				}
+				if (state.worktree) {
+					lines.push(`   Branch: ${state.worktree.branch}`);
+					lines.push(`   Worktree: ${state.worktree.path}`);
+				}
 				lines.push(`   Updated: ${state.updatedAt}`);
 				lines.push("");
 			}
@@ -644,10 +912,22 @@ export default function (pi: ExtensionAPI) {
 				saveImplState(cwd, state);
 
 				clearPipelineWidget(ctx);
-				ctx.ui.notify(
-					"Implementation cancelled. Resume with /implement-resume",
-					"info",
-				);
+				if (state.worktree) {
+					ctx.ui.notify(
+						[
+							"Implementation cancelled. The worktree has been kept and is resumable.",
+							`Worktree: ${state.worktree.path}`,
+							`Branch:   ${state.worktree.branch}`,
+							"Use /implement-resume to continue.",
+						].join("\n"),
+						"info",
+					);
+				} else {
+					ctx.ui.notify(
+						"Implementation cancelled. Resume with /implement-resume",
+						"info",
+					);
+				}
 			}
 		},
 	});

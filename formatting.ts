@@ -305,7 +305,11 @@ export function formatImplState(state: ImplementationState): string {
 	}
 
 	// Git section
-	if ((state.checkpoints && state.checkpoints.length > 0) || state.errorStash) {
+	if (
+		(state.checkpoints && state.checkpoints.length > 0) ||
+		state.errorStash ||
+		state.worktree
+	) {
 		lines.push("");
 		lines.push("📦 Git");
 		if (state.checkpoints && state.checkpoints.length > 0) {
@@ -318,6 +322,10 @@ export function formatImplState(state: ImplementationState): string {
 					state.errorStash + " (will be dropped on resume)",
 				),
 			);
+		}
+		if (state.worktree) {
+			lines.push(formatKeyValue("  Branch", state.worktree.branch));
+			lines.push(formatKeyValue("  Worktree", state.worktree.path));
 		}
 	}
 
