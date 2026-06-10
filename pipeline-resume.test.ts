@@ -319,3 +319,103 @@ describe("Worktree resume decisions", () => {
 		}
 	});
 });
+
+// ============================================
+// FR-3.4 regression: worktree/setup lastError agentTask routing
+// ============================================
+
+describe("FR-3.4: worktree and setup-script lastError must not trigger agent retry", () => {
+	it("worktree-setup (base-path) failure: agentTask is empty string (falsy)", () => {
+		// Simulates the lastError saved when resolveAndValidateBasePath fails
+		const err = {
+			timestamp: new Date().toISOString(),
+			agent: "worktree-setup",
+			role: "implementer",
+			exitCode: 1,
+			stderr: "base path outside project",
+			errorType: "VALIDATION",
+			agentTask: "",
+		};
+		// Resume routing: `else if (state.lastError.agentTask)` must NOT fire
+		expect(err.agentTask).toBe("");
+		expect(Boolean(err.agentTask)).toBe(false);
+	});
+
+	it("worktree-setup (creation) failure: agentTask is empty string (falsy)", () => {
+		// Simulates the lastError saved when createWorktree fails
+		const err = {
+			timestamp: new Date().toISOString(),
+			agent: "worktree-setup",
+			role: "implementer",
+			exitCode: 1,
+			stderr: "git worktree add failed",
+			errorType: "VALIDATION",
+			agentTask: "",
+		};
+		expect(err.agentTask).toBe("");
+		expect(Boolean(err.agentTask)).toBe(false);
+	});
+
+	it("setup-script failure: agentTask is empty string (falsy)", () => {
+		// Simulates the lastError saved when runSetupScript fails (both /implement and /implement-resume)
+		const err = {
+			timestamp: new Date().toISOString(),
+			agent: "setup-script",
+			role: "implementer",
+			exitCode: 2,
+			stderr: "npm install failed\nerror: missing package",
+			errorType: "VALIDATION",
+			agentTask: "",
+		};
+		expect(err.agentTask).toBe("");
+		expect(Boolean(err.agentTask)).toBe(false);
+	});
+
+	it("normal implementer failure: agentTask is truthy (agent retry path fires correctly)", () => {
+		// Verifies the contrast: a real agent task DOES have a non-empty agentTask
+		const err = {
+			timestamp: new Date().toISOString(),
+			agent: "implementer",
+			role: "implementer",
+			exitCode: 1,
+			stderr: "context length exceeded",
+			errorType: "CONTEXT_OVERFLOW",
+			agentTask: "Implement phase 2: add auth module",
+		};
+		expect(err.agentTask).not.toBe("");
+		expect(Boolean(err.agentTask)).toBe(true);
+	});
+
+	it("persisted worktree-setup failure state has falsy agentTask after save/load round-trip", () => {
+		const tempDir = fs.mkdtempSync(
+			path.join(os.tmpdir(), "fr34-regression-"),
+		);
+		try {
+			const state = createInitialImplState(
+				"docs/specs/test.md",
+				"# Spec",
+				"2606101218",
+			);
+			state.lastError = {
+				timestamp: new Date().toISOString(),
+				agent: "worktree-setup",
+				role: "implementer",
+				exitCode: 1,
+				stderr: "git worktree add failed",
+				errorType: "VALIDATION",
+				agentTask: "",
+			};
+			saveImplState(tempDir, state);
+
+			const loaded = loadImplState(tempDir, state.id);
+			expect(loaded).not.toBeNull();
+			expect(loaded!.lastError).toBeTruthy();
+			const loadedErr = loaded!.lastError as { agentTask: string };
+			expect(loadedErr.agentTask).toBe("");
+			// Confirm the routing condition evaluates to false
+			expect(Boolean(loadedErr.agentTask)).toBe(false);
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+});

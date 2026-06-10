@@ -332,7 +332,7 @@ export default function (pi: ExtensionAPI) {
 						exitCode: 1,
 						stderr: basePathResult.error,
 						errorType: "VALIDATION",
-						agentTask: "Validate worktree base path",
+						agentTask: "", // Not retryable via agent — no agentTask (FR-3.4)
 					};
 					saveImplState(projectRoot, state);
 					ctx.ui.notify(
@@ -361,7 +361,7 @@ export default function (pi: ExtensionAPI) {
 						exitCode: 1,
 						stderr: worktreeResult.error,
 						errorType: "VALIDATION",
-						agentTask: "Create git worktree",
+						agentTask: "", // Not retryable via agent — no agentTask (FR-3.4)
 					};
 					saveImplState(projectRoot, state);
 					ctx.ui.notify(
@@ -404,7 +404,7 @@ export default function (pi: ExtensionAPI) {
 							exitCode: scriptResult.exitCode,
 							stderr: scriptResult.outputTail,
 							errorType: "VALIDATION",
-							agentTask: "Run worktree setup script",
+							agentTask: "", // Not retryable via agent — resume must re-run the script (FR-3.4)
 						};
 						saveImplState(projectRoot, state);
 						ctx.ui.notify(
@@ -652,7 +652,7 @@ export default function (pi: ExtensionAPI) {
 							exitCode: scriptResult.exitCode,
 							stderr: scriptResult.outputTail,
 							errorType: "VALIDATION",
-							agentTask: "Run worktree setup script",
+							agentTask: "", // Not retryable via agent — resume must re-run the script (FR-3.4)
 						};
 						saveImplState(projectRoot, state);
 						ctx.ui.notify(
