@@ -647,8 +647,7 @@ describe("/implement input contract (FR-2.2)", () => {
 			"refactor billing",
 		];
 		for (const arg of freeTextArgs) {
-			const looksLikeFilePath =
-				arg.includes("/") || /\.(md|typ)$/i.test(arg);
+			const looksLikeFilePath = arg.includes("/") || /\.(md|typ)$/i.test(arg);
 			// Free text does not look like a file path → guidance error path
 			expect(looksLikeFilePath).toBe(false);
 		}
@@ -656,15 +655,13 @@ describe("/implement input contract (FR-2.2)", () => {
 
 	it("does NOT treat .md argument as free text", () => {
 		const arg = "plan.md";
-		const looksLikeFilePath =
-			arg.includes("/") || /\.(md|typ)$/i.test(arg);
+		const looksLikeFilePath = arg.includes("/") || /\.(md|typ)$/i.test(arg);
 		expect(looksLikeFilePath).toBe(true);
 	});
 
 	it("does NOT treat .typ argument as free text", () => {
 		const arg = "delivery-plan.typ";
-		const looksLikeFilePath =
-			arg.includes("/") || /\.(md|typ)$/i.test(arg);
+		const looksLikeFilePath = arg.includes("/") || /\.(md|typ)$/i.test(arg);
 		expect(looksLikeFilePath).toBe(true);
 	});
 
@@ -675,8 +672,7 @@ describe("/implement input contract (FR-2.2)", () => {
 			"/home/user/plan.md",
 		];
 		for (const arg of args) {
-			const looksLikeFilePath =
-				arg.includes("/") || /\.(md|typ)$/i.test(arg);
+			const looksLikeFilePath = arg.includes("/") || /\.(md|typ)$/i.test(arg);
 			expect(looksLikeFilePath).toBe(true);
 		}
 	});
