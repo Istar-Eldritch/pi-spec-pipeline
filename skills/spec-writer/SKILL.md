@@ -46,4 +46,10 @@ The spec includes:
 
 ## Handoff
 
-After the spec is written, review the saved file path with the user. If they want to implement it next, hand off to `implement-pipeline`.
+After the spec is written, review the saved file path with the user. The next step before implementation is creating a delivery plan:
+
+```text
+subagent agent=delivery-plan-architect task="Read <spec-path> and write the delivery plan to <output-path>."
+```
+
+Once the delivery plan is approved, hand off to `implement-pipeline` to execute it.

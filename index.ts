@@ -1,73 +1,22 @@
 /**
  * Spec Pipeline Extension
  *
- * Split into two separate workflows:
- *
- * SPEC CREATION (/spec):
- *   1. Discovery (optional): Conversational — LLM proposes assumptions one at a time for user to confirm
- *   2. Spec Drafting: Conversational — user guides LLM to write specification
- *   3. User Approval: User approves, requests revisions, or cancels
- *   4. User reviews and approves the spec
- *
- * HIERARCHY (/roadmap, /epic):
- *   1. Discovery (optional): Conversational — LLM proposes assumptions one at a time for user to confirm
- *   2. Drafting: Conversational — user guides LLM to write document
- *   3. User Approval: User approves, requests revisions, or cancels
- *   4. Child extraction (auto-parses child items table from document)
- *   5. User reviews and approves the document
- *
  * IMPLEMENTATION (/implement):
- *   1. Takes EITHER a spec file path OR a description as input
- *      - File path: Reads spec and starts implementation
- *      - Description: Enters discovery mode → writes summary → starts implementation
- *   2. Discovery (if using description): Conversational — LLM proposes assumptions
- *   3. For each implementation phase (plan + implement interleaved):
- *      - Plan Drafting: GPT-5.5 drafts implementation plan
- *      - Implementation: GPT-5.5 implements according to plan
- *      - Code Review: GPT-5.4 reviews implementation
- *   3. User reviews the implementation
+ *   1. Accepts a delivery-plan file produced by the delivery-plan-architect agent.
+ *   2. Parses the phase table (| Phase | Focus | Effort | Difficulty? |).
+ *   3. For each phase: plan → implement → code review → commit.
  *
  * Usage:
- *   /plan <description>                             # Conversational scoping → recommends roadmap/epic/spec
- *   /plan-done                                      # Accept or override scoping recommendation
- *   /plan-cancel                                    # Cancel scoping session
- *   /plan --roadmap <description>                   # Skip scoping, create roadmap
- *   /plan --epic <description>                      # Skip scoping, create epic
- *   /plan --feature <description>                   # Skip scoping, create feature spec
- *
- *   /roadmap <description>                          # Create a roadmap (→ epics)
- *   /roadmap-resume                                 # Resume roadmap pipeline
- *   /roadmap-status                                 # Show roadmap status
- *   /roadmap-list                                   # List roadmaps
- *   /roadmap-cancel                                 # Cancel roadmap pipeline
- *
- *   /epic <description>                             # Create an epic (→ feature specs)
- *   /epic --roadmap <id> <description>              # Create epic linked to roadmap
- *   /epic-resume                                    # Resume epic pipeline
- *   /epic-status                                    # Show epic status
- *   /epic-list                                      # List epics
- *   /epic-cancel                                    # Cancel epic pipeline
- *
- *   /plan-overview [id]                             # Show full hierarchy tree
- *
- *   /spec <description>                             # Start spec creation
- *   /spec --quick <description>                     # Skip discovery phase
- *   /spec-resume                                    # Resume spec creation
- *   /spec-status                                    # Show spec status
- *   /spec-list                                      # List spec pipelines
- *   /spec-cancel                                    # Cancel spec pipeline
- *
- *   /implement <spec-path|description>              # Start implementation (file or discovery)
- *   /implement --no-plan <spec-path|description>    # Skip plan generation
- *   /implement --no-review <spec-path|description>  # Skip reviews
- *   /implement-resume                               # Resume implementation
- *   /implement-status                               # Show implementation status
- *   /implement-list                                 # List implementations
- *   /implement-cancel                               # Cancel implementation
- *   /implement-metrics [id]                         # Export metrics
+ *   /implement [--no-plan] [--no-review] [--auto] <delivery-plan.md>
+ *   /implement-resume      # Resume the last active implementation
+ *   /implement-status      # Show current implementation status
+ *   /implement-list        # List all implementations with status
+ *   /implement-cancel      # Cancel current implementation
+ *   /implement-metrics [id] # Export metrics JSON
  *
  * Configuration:
- *   Create .pi/spec-pipeline.json in your project root (same config for both)
+ *   Create .pi/spec-pipeline.json in your project root.
+ *   Unknown or removed fields (e.g. specTemplate, roadmapDrafter) are silently ignored.
  */
 
 import * as fs from "node:fs";
@@ -76,11 +25,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 // Import types
-import type {
-	ImplementationState,
-	ProjectConfig,
-	RoleName,
-} from "./types.ts";
+import type { ImplementationState, ProjectConfig, RoleName } from "./types.ts";
 
 // Import config
 import { loadPipelineConfig, getEscalatedModelConfig } from "./config.ts";
@@ -173,10 +118,8 @@ function installBundledSubagents(): void {
 	}
 }
 
-
 export default function (pi: ExtensionAPI) {
 	installBundledSubagents();
-
 
 	// ============================================
 	// IMPLEMENTATION COMMANDS

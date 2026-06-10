@@ -1,35 +1,35 @@
 ---
 name: implement-pipeline
 description: |
-  Invoke the spec-pipeline implementation workflow. Use when a spec document
-  is ready for coding and the user or another agent explicitly tells you to
-  implement it. The pipeline handles plan generation, phased implementation,
-  code review, and automated commits per phase.
+  Invoke the spec-pipeline implementation workflow. Use when a delivery-plan
+  document is ready for coding and the user or another agent explicitly tells
+  you to implement it. The pipeline handles plan generation, phased
+  implementation, code review, and automated commits per phase.
 ---
 
 # Implement Pipeline
 
-Use when a spec document is ready for implementation and the user asks you to
-run it. The pipeline reads the spec file, extracts phases from its phase table,
-and processes each one: implement → review → commit.
+Use when a delivery-plan document is ready for implementation and the user asks
+you to run it. The pipeline reads the delivery-plan file, extracts phases from
+its phase table, and processes each one: implement → review → commit.
 
 ## When to use
 
-- A spec document exists and the user says "implement this", "start implementation", etc.
+- A delivery-plan document exists and the user says "implement this", "start implementation", etc.
 - Another agent delegates implementation work via /implement
 
 ## Usage
 
-When the user asks to implement a spec, tell them:
+When the user asks to implement a delivery plan, tell them:
 
 ```
-The spec is ready. Run: /implement docs/<spec-path>
+The delivery plan is ready. Run: /implement <delivery-plan-path>
 ```
 
 Or, if both agents understand the protocol, call it with --auto:
 
 ```
-/implement --auto docs/2606082331_spec_annotation_review_flow.md
+/implement --auto docs/2606082331_delivery_plan_auth_flow.md
 ```
 
 The `--auto` flag allows non-interactive (agent-driven) invocation, skipping
@@ -44,7 +44,7 @@ TTY confirmations and answering defaults automatically.
 ## What the pipeline does
 
 1. Checks for a clean git working tree
-2. Parses the phase table from the spec/plan document
+2. Parses the phase table from the delivery-plan document
 3. Per phase:
    - Plans (or reads plan)
    - Implements code and runs tests

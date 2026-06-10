@@ -1,3 +1,6 @@
+> **Note:** This template is no longer auto-loaded by the extension. Use it as a reference
+> when working with the `spec-writer` agent or when authoring a spec manually.
+
 # Spec: <Title> (<TICKET-ID>)
 
 **Status:** Draft

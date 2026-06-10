@@ -15,7 +15,7 @@ The discovery interview runs as an **async subagent** and communicates entirely 
 ## When to Trigger
 
 - User starts with "I have an idea", "I want to build X", or describes a solution before defining the need
-- The problem space is fuzzy before a `/spec` or planning session
+- The problem space is fuzzy before a `spec-writer` or `delivery-plan-architect` run
 - User explicitly asks for a discovery interview
 
 Skip if the user already has a clear, grounded problem statement.
@@ -39,7 +39,7 @@ Skip if the user already has a clear, grounded problem statement.
    - **A discovery interview is human-paced.** Long gaps between turns are expected and normal — the interviewer is *supposed* to be blocked waiting on the user. Do NOT treat "no activity for 60s" stall nudges as a problem or interrupt/resume the run because of them. Only act on a nudge if the interviewer is genuinely stuck (e.g. it errored), not merely waiting for the next human answer.
    - **Answer grounding/codebase questions yourself.** If the interviewer asks something the codebase can answer ("does the assignee picker wire to a backend?", "what statuses exist today?"), look it up with your own tools and feed the *fact* back as the reply rather than relaying a code question to the user. Reserve the user's attention for intent and product decisions.
 
-4. **Proceed with spec drafting** using the problem summary as input — hand it to `/spec` or use it to start the planning phase.
+4. **Proceed with spec writing** using the problem summary as input — hand it to the `spec-writer` agent to produce a technical specification, then use the `delivery-plan-architect` agent to produce a delivery plan, and finally run `/implement` to execute the plan.
 
 ## Presenting Questions to the User
 
