@@ -387,6 +387,24 @@ function buildProjectConfig(
 	// Skip plan generation (experimental A/B testing)
 	const skipPlanGeneration = config.skipPlanGeneration ?? false;
 
+	// Normalize tier configs with the project-level streamIdleTimeoutMs fallback,
+	// identical to the per-role normalization already done inside mergeWithDefaults.
+	// Without this, escalated-tier agents receive a ModelConfig without
+	// streamIdleTimeoutMs and fall back to the hardcoded 90 s watchdog default,
+	// even when the project config specifies a much longer timeout.
+	const normalizedTiers: typeof config.tiers = (() => {
+		if (!config.tiers || config.streamIdleTimeoutMs === undefined)
+			return config.tiers;
+		const result = { ...config.tiers };
+		for (const tier of ["strong", "mid", "cheap"] as const) {
+			const t = result[tier];
+			if (t && t.streamIdleTimeoutMs === undefined) {
+				result[tier] = { ...t, streamIdleTimeoutMs: config.streamIdleTimeoutMs };
+			}
+		}
+		return result;
+	})();
+
 	// Normalize worktree config (FR-1.2).
 	// setupScript is absent when missing, null, or whitespace-only.
 	const rawSetupScript = config.worktree?.setupScript;
@@ -402,7 +420,7 @@ function buildProjectConfig(
 		projectContextForReviewer,
 		projectContextForFixer,
 		models,
-		tiers: config.tiers,
+		tiers: normalizedTiers,
 		escalation: normalizeEscalation(config.escalation),
 		reviewCycles,
 		skipPlanGeneration,

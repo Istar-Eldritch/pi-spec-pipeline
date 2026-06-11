@@ -584,3 +584,86 @@ describe("worktree config normalization", () => {
 		expect(DEFAULT_WORKTREE_BASE_PATH).toBe(".pi/worktrees");
 	});
 });
+
+describe("tier streamIdleTimeoutMs normalization", () => {
+	let tmpDir: string;
+
+	beforeEach(() => {
+		tmpDir = fs.mkdtempSync(
+			path.join(os.tmpdir(), "config-tier-timeout-test-"),
+		);
+		fs.mkdirSync(path.join(tmpDir, ".pi"), { recursive: true });
+	});
+
+	afterEach(() => {
+		fs.rmSync(tmpDir, { recursive: true, force: true });
+	});
+
+	function writeConfig(config: object): void {
+		fs.writeFileSync(
+			path.join(tmpDir, ".pi", "spec-pipeline.json"),
+			JSON.stringify(config),
+			"utf-8",
+		);
+	}
+
+	function loadConfig(): ProjectConfig {
+		const result = loadPipelineConfig(tmpDir);
+		if (!result.success) throw new Error((result as any).error);
+		return (result as any).config;
+	}
+
+	// Regression: escalated tier configs were stored raw (without the project-level
+	// streamIdleTimeoutMs fallback), causing the 90 s hardcoded watchdog default
+	// to fire even when the project config defined a much longer timeout.
+	it("project-level streamIdleTimeoutMs propagates into tier configs (regression)", () => {
+		writeConfig({
+			streamIdleTimeoutMs: 1_800_000,
+			tiers: {
+				strong: { model: "claude-bridge/claude-opus-4-8", thinking: "high" },
+				mid: { model: "claude-bridge/claude-sonnet-4-6", thinking: "high" },
+				cheap: { model: "claude-bridge/claude-haiku-4-5", thinking: "off" },
+			},
+		});
+		const config = loadConfig();
+		// All three tiers must inherit the project-level timeout
+		expect(config.tiers?.strong?.streamIdleTimeoutMs).toBe(1_800_000);
+		expect(config.tiers?.mid?.streamIdleTimeoutMs).toBe(1_800_000);
+		expect(config.tiers?.cheap?.streamIdleTimeoutMs).toBe(1_800_000);
+	});
+
+	it("explicit streamIdleTimeoutMs on a tier takes precedence over project-level", () => {
+		writeConfig({
+			streamIdleTimeoutMs: 1_800_000,
+			tiers: {
+				strong: {
+					model: "claude-bridge/claude-opus-4-8",
+					thinking: "high",
+					streamIdleTimeoutMs: 600_000,
+				},
+				mid: { model: "claude-bridge/claude-sonnet-4-6", thinking: "high" },
+			},
+		});
+		const config = loadConfig();
+		// strong has its own → preserved; mid has none → inherits project default
+		expect(config.tiers?.strong?.streamIdleTimeoutMs).toBe(600_000);
+		expect(config.tiers?.mid?.streamIdleTimeoutMs).toBe(1_800_000);
+	});
+
+	it("no project-level streamIdleTimeoutMs → tier configs unchanged", () => {
+		writeConfig({
+			tiers: {
+				strong: { model: "claude-bridge/claude-opus-4-8", thinking: "high" },
+			},
+		});
+		const config = loadConfig();
+		// No project-level fallback → tier should NOT have streamIdleTimeoutMs
+		expect(config.tiers?.strong?.streamIdleTimeoutMs).toBeUndefined();
+	});
+
+	it("no tiers config → normalizedTiers is undefined", () => {
+		writeConfig({ streamIdleTimeoutMs: 1_800_000 });
+		const config = loadConfig();
+		expect(config.tiers).toBeUndefined();
+	});
+});
