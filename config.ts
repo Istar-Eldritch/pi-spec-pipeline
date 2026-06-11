@@ -399,7 +399,10 @@ function buildProjectConfig(
 		for (const tier of ["strong", "mid", "cheap"] as const) {
 			const t = result[tier];
 			if (t && t.streamIdleTimeoutMs === undefined) {
-				result[tier] = { ...t, streamIdleTimeoutMs: config.streamIdleTimeoutMs };
+				result[tier] = {
+					...t,
+					streamIdleTimeoutMs: config.streamIdleTimeoutMs,
+				};
 			}
 		}
 		return result;
