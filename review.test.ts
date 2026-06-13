@@ -1,5 +1,8 @@
-import { describe, it, expect } from "vitest";
-import { parseVerdict, hasSignificantIssues } from "./review.ts";
+import { describe, it, expect, afterEach } from "vitest";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { parseVerdict, hasSignificantIssues, rematerializeMissingSpecPath } from "./review.ts";
 
 describe("parseVerdict", () => {
 	describe("explicit verdict markers", () => {
@@ -206,5 +209,103 @@ describe("hasSignificantIssues", () => {
 
 	it("returns false for general feedback", () => {
 		expect(hasSignificantIssues("The code looks good, just some small tweaks needed")).toBe(false);
+	});
+});
+
+describe("rematerializeMissingSpecPath", () => {
+	const cleanupDirs: string[] = [];
+
+	afterEach(() => {
+		for (const dir of cleanupDirs) {
+			try {
+				fs.rmSync(dir, { recursive: true, force: true });
+			} catch {
+				// best-effort cleanup
+			}
+		}
+		cleanupDirs.length = 0;
+	});
+
+	it("rewrites a missing tmp spec path and creates a real file with content", () => {
+		const missingPath = "/tmp/spec-pipeline-abc123/spec.md";
+		const task = `Review this spec: ${missingPath} and also ${missingPath}`;
+		const specContent = "# Spec\nThis is the spec content.";
+
+		const result = rematerializeMissingSpecPath(task, specContent);
+
+		expect(result.wasRematerialized).toBe(true);
+		expect(result.freshSpecPath).toBeDefined();
+		expect(fs.existsSync(result.freshSpecPath!)).toBe(true);
+		expect(fs.readFileSync(result.freshSpecPath!, "utf-8")).toBe(specContent);
+		expect(result.agentTask).not.toContain(missingPath);
+		expect(result.agentTask).toContain(result.freshSpecPath);
+		expect(result.agentTask).toBe(
+			`Review this spec: ${result.freshSpecPath} and also ${result.freshSpecPath}`,
+		);
+
+		if (result.freshSpecPath) cleanupDirs.push(path.dirname(result.freshSpecPath));
+	});
+
+	it("leaves the task unchanged when the referenced tmp spec path still exists", () => {
+		const freshDir = fs.mkdtempSync(path.join(os.tmpdir(), "spec-pipeline-"));
+		cleanupDirs.push(freshDir);
+		const existingPath = path.join(freshDir, "spec.md");
+		fs.writeFileSync(existingPath, "# Original spec", "utf-8");
+
+		const task = `Please review ${existingPath} carefully.`;
+		const specContent = "# New spec content";
+
+		const result = rematerializeMissingSpecPath(task, specContent);
+
+		expect(result.wasRematerialized).toBe(false);
+		expect(result.agentTask).toBe(task);
+		expect(fs.readFileSync(existingPath, "utf-8")).toBe("# Original spec");
+	});
+
+	it("leaves the task unchanged when there is no spec-pipeline path", () => {
+		const task = "Review the code directly, no spec attached.";
+		const result = rematerializeMissingSpecPath(task, "unused");
+
+		expect(result.wasRematerialized).toBe(false);
+		expect(result.agentTask).toBe(task);
+	});
+
+	it("rewrites multiple distinct missing spec paths to the same fresh file", () => {
+		const missingA = "/tmp/spec-pipeline-aaa111/spec.md";
+		const missingB = "/tmp/spec-pipeline-bbb222/spec.md";
+		const task = `Compare ${missingA} with ${missingB}`;
+		const specContent = "# Unified spec";
+
+		const result = rematerializeMissingSpecPath(task, specContent);
+
+		expect(result.wasRematerialized).toBe(true);
+		expect(result.freshSpecPath).toBeDefined();
+		expect(result.agentTask).not.toContain(missingA);
+		expect(result.agentTask).not.toContain(missingB);
+		expect(result.agentTask.split(result.freshSpecPath!).length - 1).toBe(2);
+		expect(fs.readFileSync(result.freshSpecPath!, "utf-8")).toBe(specContent);
+
+		if (result.freshSpecPath) cleanupDirs.push(path.dirname(result.freshSpecPath));
+	});
+
+	it("rematerializes when at least one referenced path is missing, even if others exist", () => {
+		const freshDir = fs.mkdtempSync(path.join(os.tmpdir(), "spec-pipeline-"));
+		cleanupDirs.push(freshDir);
+		const existingPath = path.join(freshDir, "spec.md");
+		fs.writeFileSync(existingPath, "# Existing", "utf-8");
+
+		const missingPath = "/tmp/spec-pipeline-ghost/spec.md";
+		const task = `Check ${existingPath} and ${missingPath}`;
+		const specContent = "# Replacement";
+
+		const result = rematerializeMissingSpecPath(task, specContent);
+
+		expect(result.wasRematerialized).toBe(true);
+		expect(result.agentTask).not.toContain(missingPath);
+		expect(result.agentTask).not.toContain(existingPath);
+		expect(fs.existsSync(result.freshSpecPath!)).toBe(true);
+		expect(fs.readFileSync(result.freshSpecPath!, "utf-8")).toBe(specContent);
+
+		if (result.freshSpecPath) cleanupDirs.push(path.dirname(result.freshSpecPath));
 	});
 });

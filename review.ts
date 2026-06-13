@@ -14,6 +14,9 @@ import type {
 	RoleName,
 	EscalationReason,
 } from "./types.ts";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import type { PipelineRoots } from "./implement-pipeline.ts";
 import { runAgentWithConfig, createProgressCallback } from "./agents.ts";
 import { runAgentWithEscalation } from "./escalation.ts";
@@ -484,6 +487,38 @@ export async function runReview(
 }
 
 // ============================================
+// Spec tmp-file re-materialization helper
+// ============================================
+
+/**
+ * Rewrite references to missing tmp spec files in `agentTask`.
+ *
+ * The saved agentTask may reference `/tmp/spec-pipeline-XXXX/spec.md` from a
+ * previous pipeline process. If any referenced path no longer exists, create a
+ * fresh tmp directory, write `specContent` to `<fresh>/spec.md`, and rewrite all
+ * matched references to that new path. If all referenced paths still exist (or
+ * none are referenced), `agentTask` is returned unchanged.
+ */
+export function rematerializeMissingSpecPath(
+	agentTask: string,
+	specContent: string,
+): { agentTask: string; wasRematerialized: boolean; freshSpecPath?: string } {
+	const specRefRegex = /[^\s"'`]*spec-pipeline-[^/\s]+[/\\]spec\.md/g;
+	const specRefs = agentTask.match(specRefRegex);
+	if (specRefs?.some((p) => !fs.existsSync(p))) {
+		const freshDir = fs.mkdtempSync(path.join(os.tmpdir(), "spec-pipeline-"));
+		const freshSpecPath = path.join(freshDir, "spec.md");
+		fs.writeFileSync(freshSpecPath, specContent, "utf-8");
+		return {
+			agentTask: agentTask.replace(specRefRegex, freshSpecPath),
+			wasRematerialized: true,
+			freshSpecPath,
+		};
+	}
+	return { agentTask, wasRematerialized: false };
+}
+
+// ============================================
 // Retry Failed Operation
 // ============================================
 
@@ -519,7 +554,14 @@ export async function retryFailedOperation(
 	const { createSystemPrompts, buildPromptOptions } = await import(
 		"./agents-config.ts"
 	);
-	const SYSTEM_PROMPTS = createSystemPrompts(buildPromptOptions(projectConfig));
+	// Anchor the retried agent's system prompt to the worktree, exactly like
+	// runImplementPipeline does. Omitting workRoot here drops the
+	// working-directory isolation directive, and the retried agent cd's back
+	// to the canonical main checkout and silently writes its work there
+	// (observed in the wild: catacloud impl 20260611_084350_ieov).
+	const SYSTEM_PROMPTS = createSystemPrompts(
+		buildPromptOptions(projectConfig, workRoot),
+	);
 	const systemPrompt =
 		SYSTEM_PROMPTS[error.role as keyof typeof SYSTEM_PROMPTS];
 	if (!systemPrompt) {
@@ -579,6 +621,22 @@ export async function retryFailedOperation(
 		modelConfig = escalation.config;
 	}
 
+	// The saved agentTask may reference spec/plan files in the tmp directory of
+	// the original pipeline process (/tmp/spec-pipeline-XXXX/...), which is
+	// deleted when that process exits. If the referenced spec file is gone,
+	// re-materialize it from state.specContent and rewrite the path — otherwise
+	// the retried agent goes hunting in /tmp and may read another run's spec.
+	const { agentTask, wasRematerialized } = rematerializeMissingSpecPath(
+		error.agentTask,
+		state.specContent,
+	);
+	if (wasRematerialized) {
+		ctx.ui.notify(
+			"Spec tmp file from the original run is gone — re-materialized it for the retry.",
+			"info",
+		);
+	}
+
 	const progressCallback = createProgressCallback(
 		{
 			ui: { notify: ctx.ui.notify, setWidget: ctx.ui.setWidget ?? (() => {}) },
@@ -590,7 +648,7 @@ export async function retryFailedOperation(
 
 	const result = await runAgentWithConfig(
 		modelConfig,
-		error.agentTask,
+		agentTask,
 		workRoot,
 		systemPrompt,
 		undefined,
@@ -607,7 +665,7 @@ export async function retryFailedOperation(
 			result,
 			modelConfig.model,
 			error.role,
-			error.agentTask,
+			agentTask,
 			error.phase,
 			error.cycle,
 			ctx.ui.notify.bind(ctx.ui),
