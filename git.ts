@@ -232,8 +232,47 @@ export async function stageFiles(
 		return true; // Nothing to stage
 	}
 
+	// `git add --all <path>` aborts (exit 1) when <path> is an ignored untracked
+	// file, even if other requested files are fine. This happens when a tracked
+	// file was staged for deletion and the same path was later reused by an
+	// ignored untracked file/symlink. We must still stage tracked modifications
+	// and deletions, but we must never force-add genuinely ignored artifacts.
+	//
+	// Strategy: drop files that are both ignored AND untracked; stage the rest.
+	// `git check-ignore` reports ignored paths; `git ls-files` reports tracked
+	// paths (including files whose deletion has not been committed yet). A file
+	// that is tracked is always staged, even if it matches an ignore pattern.
+	const checkIgnoreResult = await execGit(cwd, ["check-ignore", ...files]);
+	const ignoredPaths = new Set<string>(
+		checkIgnoreResult.code === 0 && checkIgnoreResult.stdout
+			? checkIgnoreResult.stdout
+					.split("\n")
+					.map((line) => line.trim())
+					.filter((line) => line.length > 0)
+			: [],
+	);
+
+	const lsFilesResult = await execGit(cwd, ["ls-files", ...files]);
+	const trackedPaths = new Set<string>(
+		lsFilesResult.code === 0 && lsFilesResult.stdout
+			? lsFilesResult.stdout
+					.split("\n")
+					.map((line) => line.trim())
+					.filter((line) => line.length > 0)
+			: [],
+	);
+
+	const filesToStage = files.filter((file) => {
+		// Skip untracked ignored files; keep tracked files even if ignored.
+		return !(ignoredPaths.has(file) && !trackedPaths.has(file));
+	});
+
+	if (filesToStage.length === 0) {
+		return true; // Nothing eligible to stage
+	}
+
 	// Use 'git add --all <file>...' to handle modifications, deletions, and renames
-	const result = await execGit(cwd, ["add", "--all", ...files]);
+	const result = await execGit(cwd, ["add", "--all", ...filesToStage]);
 	return result.code === 0;
 }
 

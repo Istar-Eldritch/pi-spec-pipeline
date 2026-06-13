@@ -374,6 +374,55 @@ describe("Git file tracking utilities", () => {
 			expect(statusResult.stdout).toContain("A  file2.txt");
 			expect(statusResult.stdout).toContain("?? file3.txt");
 		});
+
+		it("stages a staged deletion even when the deleted path is now ignored and reused by an untracked symlink", async () => {
+			// Regression: a tracked file is staged for deletion, then the same
+			// path becomes gitignored and is reused by an untracked symlink.
+			// `git add --all .cache` would fail on the ignored symlink and
+			// abort the whole staging operation.
+			await writeFile(join(testDir, ".cache"), "cached\n");
+			await execGit(testDir, ["add", ".cache"]);
+			await execGit(testDir, ["commit", "-m", "add cache"]);
+
+			await execGit(testDir, ["rm", ".cache"]);
+			await writeFile(join(testDir, ".gitignore"), ".cache\n");
+			// Recreate as a symlink like the catacloud worktree setup script does.
+			await execGit(testDir, ["ln", "-s", "/tmp", join(testDir, ".cache")]);
+
+			await writeFile(join(testDir, "README.md"), "# Modified\n");
+
+			const result = await stageFiles(testDir, [".cache", "README.md"]);
+			expect(result).toBe(true);
+
+			const statusResult = await execGit(testDir, ["status", "--porcelain"]);
+			expect(statusResult.stdout).toContain("D  .cache");
+			expect(statusResult.stdout).toContain("M  README.md");
+			expect(statusResult.stdout).not.toContain("?? .cache");
+
+			await execGit(testDir, ["commit", "-m", "fix: drop cache and update readme"]);
+			const committedFiles = await execGit(testDir, [
+				"diff-tree",
+				"--no-commit-id",
+				"--name-only",
+				"-r",
+				"HEAD",
+			]);
+			expect(committedFiles.stdout).toContain(".cache");
+			expect(committedFiles.stdout).toContain("README.md");
+		});
+
+		it("does not force-add an ignored untracked file", async () => {
+			await writeFile(join(testDir, ".gitignore"), "ignored.txt\n");
+			await writeFile(join(testDir, "ignored.txt"), "should not be committed\n");
+			await writeFile(join(testDir, "tracked.txt"), "should be committed\n");
+
+			const result = await stageFiles(testDir, ["ignored.txt", "tracked.txt"]);
+			expect(result).toBe(true);
+
+			const statusResult = await execGit(testDir, ["status", "--porcelain"]);
+			expect(statusResult.stdout).not.toContain("ignored.txt");
+			expect(statusResult.stdout).toContain("A  tracked.txt");
+		});
 	});
 
 	describe("hasChangesStaged", () => {
