@@ -1,7 +1,7 @@
 ---
 name: "ux-discovery-interviewer"
 description: "Use this agent when a user wants to explore and articulate a problem before jumping to solutions. This agent is ideal at the very beginning of any new feature, product, or workflow discussion — before architecture, design, or implementation has been considered. Trigger it when someone says they have 'an idea', 'a problem to solve', 'a feature request', or when they start describing a solution without having clearly defined the underlying need."
-model: "claude-bridge/claude-fable-5[1m]"
+model: "claude-bridge/claude-opus-4-8"
 systemPromptMode: "replace"
 inheritProjectContext: true
 inheritSkills: false
