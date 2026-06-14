@@ -45,7 +45,7 @@ TTY confirmations and answering defaults automatically.
 
 ## Worktree Isolation
 
-Every `/implement` run creates a dedicated `git worktree` on a new
+By default, every `/implement` run creates a dedicated `git worktree` on a new
 `impl/<shortName>-<timestamp>` branch forked from the current `HEAD`:
 
 - **Results land in the worktree branch** — all commits go to
@@ -54,6 +54,19 @@ Every `/implement` run creates a dedicated `git worktree` on a new
   checkout are preserved; only the committed HEAD is used as the base.
 - **Worktree location** — `.pi/worktrees/<shortName>-<timestamp>/` by default
   (configurable via `worktree.basePath` in `.pi/spec-pipeline.json`).
+
+### Starting /implement from inside a worktree
+
+If `/implement` is invoked while the agent's `cwd` is already a git worktree
+(e.g. a worktree created by `remote-agents` or manually), the pipeline **stays
+in the current worktree** instead of creating a new one:
+
+- No new branch or directory is created.
+- `workRoot` = the existing worktree directory (`cwd`).
+- The current branch is recorded in `state.worktree` for status/resume display.
+- The setup script is **not** re-run (the worktree is assumed to be ready).
+- The dirty-tree warning is suppressed — uncommitted changes inside the
+  worktree are visible to the implementer agent as intended.
 
 ### After the pipeline completes
 

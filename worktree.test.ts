@@ -12,6 +12,7 @@ import {
 	runSetupScript,
 	verifyWorktree,
 	recreateWorktree,
+	findWorktreeRootForPath,
 	type WorktreeMetadata,
 } from "./worktree.ts";
 import { execGit } from "./git.ts";
@@ -734,6 +735,75 @@ describe("recreateWorktree", () => {
 		if (!result.ok) {
 			expect(result.error).toContain("impl/ghost-branch-never-existed");
 			expect(result.error).toContain("/implement");
+		}
+	});
+});
+
+// ============================================
+// findWorktreeRootForPath
+// ============================================
+
+describe("findWorktreeRootForPath", () => {
+	let mainRepo: string;
+	let worktreeBase: string;
+
+	beforeEach(async () => {
+		mainRepo = await createTempRepo();
+		worktreeBase = path.join(mainRepo, ".pi", "worktrees");
+		fs.mkdirSync(worktreeBase, { recursive: true });
+	});
+
+	afterEach(async () => {
+		await execGit(mainRepo, ["worktree", "prune"]).catch(() => {});
+		await rm(mainRepo, { recursive: true, force: true });
+	});
+
+	it("returns null for a file in the main repo", () => {
+		const filePath = path.join(mainRepo, "docs", "spec.md");
+		fs.mkdirSync(path.dirname(filePath), { recursive: true });
+		fs.writeFileSync(filePath, "spec");
+		expect(findWorktreeRootForPath(filePath)).toBeNull();
+	});
+
+	it("returns the worktree root for a file at the root of a worktree", async () => {
+		const r = await createWorktree(
+			mainRepo,
+			mainRepo,
+			"myfeature",
+			"2606141200",
+			worktreeBase,
+		);
+		if (!r.ok) throw new Error(r.error);
+
+		const fileAtRoot = path.join(r.meta.path, "spec.md");
+		fs.writeFileSync(fileAtRoot, "spec");
+		expect(findWorktreeRootForPath(fileAtRoot)).toBe(r.meta.path);
+	});
+
+	it("returns the worktree root for a file nested deep inside a worktree", async () => {
+		const r = await createWorktree(
+			mainRepo,
+			mainRepo,
+			"myfeature",
+			"2606141201",
+			worktreeBase,
+		);
+		if (!r.ok) throw new Error(r.error);
+
+		const nestedFile = path.join(r.meta.path, "docs", "deep", "spec.md");
+		fs.mkdirSync(path.dirname(nestedFile), { recursive: true });
+		fs.writeFileSync(nestedFile, "spec");
+		expect(findWorktreeRootForPath(nestedFile)).toBe(r.meta.path);
+	});
+
+	it("returns null for a path that has no git repo at all", async () => {
+		const orphanDir = await mkdtemp(path.join(tmpdir(), "no-git-"));
+		try {
+			const filePath = path.join(orphanDir, "spec.md");
+			fs.writeFileSync(filePath, "spec");
+			expect(findWorktreeRootForPath(filePath)).toBeNull();
+		} finally {
+			await rm(orphanDir, { recursive: true, force: true });
 		}
 	});
 });

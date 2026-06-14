@@ -371,6 +371,45 @@ export async function runSetupScript(
 }
 
 // ============================================
+// Spec-path Worktree Detection
+// ============================================
+
+/**
+ * Walk up the directory tree from `filePath` looking for a git worktree root
+ * (a directory that contains a `.git` *file*, not a `.git` directory).
+ *
+ * - Returns the worktree root path when found.
+ * - Returns `null` when the first `.git` entry encountered is a directory
+ *   (the file lives directly in the main repo, not in a worktree).
+ * - Returns `null` when no `.git` entry is found before the filesystem root.
+ *
+ * Used by /implement to detect when the spec file lives inside a worktree
+ * that is different from the agent's current working directory.
+ */
+export function findWorktreeRootForPath(filePath: string): string | null {
+	let dir = path.dirname(path.resolve(filePath));
+
+	while (true) {
+		const gitEntry = path.join(dir, ".git");
+		try {
+			const stat = fs.statSync(gitEntry);
+			if (stat.isDirectory()) {
+				// Main repo root — file is not in a worktree
+				return null;
+			}
+			// .git is a file → this dir is a worktree root
+			return dir;
+		} catch {
+			// No .git here; walk up
+		}
+		const parent = path.dirname(dir);
+		if (parent === dir) break; // reached filesystem root
+		dir = parent;
+	}
+	return null;
+}
+
+// ============================================
 // Resume Helpers
 // ============================================
 

@@ -6,7 +6,8 @@
  *   2. Parses the phases — preferring the JSON phases block, falling back to
  *      legacy phase tables (| Phase | Focus | Effort | Difficulty? |).
  *   3. Creates an isolated git worktree on a new impl/<shortName>-<ts> branch
- *      forked from the triggering checkout's HEAD.
+ *      forked from the triggering checkout's HEAD — unless the triggering cwd
+ *      is already a worktree, in which case it reuses that worktree in place.
  *   4. For each phase (inside the worktree): plan → implement → code review → commit.
  *   5. All commits, stash ops, and error-recovery resets happen in the worktree;
  *      the triggering checkout is never modified.
@@ -55,6 +56,7 @@ import {
 
 // Import git operations
 import {
+	execGit,
 	validateGitRepo,
 	checkGitClean,
 	stashExists,
@@ -107,6 +109,7 @@ import {
 	runSetupScript,
 	verifyWorktree,
 	recreateWorktree,
+	findWorktreeRootForPath,
 } from "./worktree.ts";
 
 // Import system prompts
@@ -222,6 +225,20 @@ export default function (pi: ExtensionAPI) {
 				// Resolve project root (handles the case where cwd is already a worktree)
 				const projectRoot = resolveProjectRoot(cwd);
 
+				// Detect whether we should pin to an existing worktree.
+				// Two cases:
+				//  1. The agent's cwd IS a worktree (e.g. remote-agents workflow).
+				//  2. The agent's cwd is the main repo but the spec file lives
+				//     inside a different worktree — use that worktree instead of
+				//     creating a third, unrelated one.
+				const cwdIsWorktree = projectRoot !== cwd;
+				const specWorktreeRoot = !cwdIsWorktree
+					? findWorktreeRootForPath(fullSpecPath)
+					: null;
+				const isInWorktree = cwdIsWorktree || specWorktreeRoot !== null;
+				// The worktree directory to use when isInWorktree is true
+				const pinnedWorktreePath = cwdIsWorktree ? cwd : specWorktreeRoot;
+
 				// Check for existing active implementation (keyed to projectRoot)
 				const existingPipeline = getLatestActiveImplPipeline(projectRoot);
 				if (existingPipeline && !isAutoMode) {
@@ -253,19 +270,22 @@ export default function (pi: ExtensionAPI) {
 
 				// Dirty-tree warning only (FR-2.6): uncommitted changes in the
 				// triggering checkout are not included — the worktree starts from HEAD.
-				const gitClean = await checkGitClean(cwd);
-				if (!gitClean.clean) {
-					ctx.ui.notify(
-						"⚠️ Uncommitted changes in the triggering checkout will NOT be included in the implementation — only the committed HEAD is used as the worktree base.",
-						"warning",
-					);
-					if (gitClean.status) {
+				// Skip when already in a worktree (changes there ARE in scope).
+				if (!isInWorktree) {
+					const gitClean = await checkGitClean(cwd);
+					if (!gitClean.clean) {
 						ctx.ui.notify(
-							`Changed files (not included):\n${gitClean.status.slice(0, 500)}`,
-							"info",
+							"⚠️ Uncommitted changes in the triggering checkout will NOT be included in the implementation — only the committed HEAD is used as the worktree base.",
+							"warning",
 						);
+						if (gitClean.status) {
+							ctx.ui.notify(
+								`Changed files (not included):\n${gitClean.status.slice(0, 500)}`,
+								"info",
+							);
+						}
+						// Do NOT return — proceed with worktree creation from HEAD
 					}
-					// Do NOT return — proceed with worktree creation from HEAD
 				}
 
 				// Load config from projectRoot (FR-4.4)
@@ -326,119 +346,163 @@ export default function (pi: ExtensionAPI) {
 				ctx.ui.notify(`Spec: ${relativeSpecPath}`, "info");
 
 				// ============================================================
-				// WORKTREE CREATION (FR-2.4, FR-2.7)
+				// WORKTREE SETUP (FR-2.4, FR-2.7)
 				// ============================================================
-				const shortName = deriveShortName(relativeSpecPath);
-				const basePathResult = resolveAndValidateBasePath(
-					projectConfig.worktree.basePath,
-					projectRoot,
-				);
-				if (!basePathResult.ok) {
-					state.lastError = {
-						timestamp: new Date().toISOString(),
-						agent: "worktree-setup",
-						role: "implementer",
-						exitCode: 1,
-						stderr: basePathResult.error,
-						errorType: "VALIDATION",
-						agentTask: "", // Not retryable via agent — no agentTask (FR-3.4)
+				let workRoot: string;
+
+				if (isInWorktree) {
+					// Use the pinned worktree directory rather than creating a new one.
+					// Covers two cases:
+					//  • The agent's cwd is itself a worktree (cwdIsWorktree).
+					//  • The spec file lives inside a different worktree even though
+					//    the agent's cwd is the main repo (specWorktreeRoot != null).
+					const worktreeDir = pinnedWorktreePath!;
+					const reason = cwdIsWorktree
+						? "agent cwd is a worktree"
+						: "spec file lives in an existing worktree";
+					ctx.ui.notify(
+						`📌 Using existing worktree (${reason}) — skipping worktree creation`,
+						"info",
+					);
+
+					const branchResult = await execGit(worktreeDir, [
+						"rev-parse",
+						"--abbrev-ref",
+						"HEAD",
+					]);
+					const headResult = await execGit(worktreeDir, ["rev-parse", "HEAD"]);
+					const currentBranch =
+						branchResult.code === 0 ? branchResult.stdout.trim() : "unknown";
+					const baseCommit =
+						headResult.code === 0 ? headResult.stdout.trim() : "unknown";
+
+					state.worktree = {
+						path: worktreeDir,
+						branch: currentBranch,
+						baseCommit,
+						createdAt: new Date().toISOString(),
+						setupScriptRan: true, // Pre-existing worktree; assume already set up
 					};
 					saveImplState(projectRoot, state);
+
 					ctx.ui.notify(
-						`Worktree setup failed: ${basePathResult.error}`,
-						"error",
+						`✅ Using existing worktree: ${worktreeDir}\n   Branch: ${currentBranch}`,
+						"info",
 					);
-					return;
-				}
-
-				ensureBasePathGitignore(basePathResult.resolvedBase);
-
-				ctx.ui.notify("Creating implementation worktree...", "info");
-				const worktreeResult = await createWorktree(
-					cwd, // triggeringCwd (for reading HEAD)
-					projectRoot,
-					shortName,
-					implTimestamp,
-					basePathResult.resolvedBase,
-				);
-
-				if (!worktreeResult.ok) {
-					state.lastError = {
-						timestamp: new Date().toISOString(),
-						agent: "worktree-setup",
-						role: "implementer",
-						exitCode: 1,
-						stderr: worktreeResult.error,
-						errorType: "VALIDATION",
-						agentTask: "", // Not retryable via agent — no agentTask (FR-3.4)
-					};
-					saveImplState(projectRoot, state);
-					ctx.ui.notify(
-						`Failed to create worktree: ${worktreeResult.error}`,
-						"error",
-					);
-					return;
-				}
-
-				const worktreeMeta = worktreeResult.meta;
-
-				// Persist worktree metadata immediately (FR-5.1)
-				state.worktree = { ...worktreeMeta };
-				saveImplState(projectRoot, state);
-
-				ctx.ui.notify(
-					`✅ Worktree: ${worktreeMeta.path}\n   Branch: ${worktreeMeta.branch}`,
-					"info",
-				);
-
-				const workRoot = worktreeMeta.path;
-
-				// ============================================================
-				// SETUP SCRIPT (FR-3.4, FR-3.7)
-				// ============================================================
-				if (projectConfig.worktree.setupScript) {
-					ctx.ui.notify("🔧 Running setup script...", "info");
-					const scriptResult = await runSetupScript(
-						projectConfig.worktree.setupScript,
-						worktreeMeta,
+					workRoot = worktreeDir;
+				} else {
+					const shortName = deriveShortName(relativeSpecPath);
+					const basePathResult = resolveAndValidateBasePath(
+						projectConfig.worktree.basePath,
 						projectRoot,
-						state.id,
 					);
-
-					if (!scriptResult.ok) {
+					if (!basePathResult.ok) {
 						state.lastError = {
 							timestamp: new Date().toISOString(),
-							agent: "setup-script",
+							agent: "worktree-setup",
 							role: "implementer",
-							exitCode: scriptResult.exitCode,
-							stderr: scriptResult.outputTail,
+							exitCode: 1,
+							stderr: basePathResult.error,
 							errorType: "VALIDATION",
-							agentTask: "", // Not retryable via agent — resume must re-run the script (FR-3.4)
+							agentTask: "", // Not retryable via agent — no agentTask (FR-3.4)
 						};
 						saveImplState(projectRoot, state);
 						ctx.ui.notify(
-							[
-								`❌ Setup script failed (exit code ${scriptResult.exitCode}).`,
-								"",
-								"Last output:",
-								scriptResult.outputTail,
-								"",
-								`Full log: ${scriptResult.logPath}`,
-								"",
-								`Worktree kept at: ${worktreeMeta.path}`,
-								"Fix the issue and use /implement-resume to retry the setup script.",
-							].join("\n"),
+							`Worktree setup failed: ${basePathResult.error}`,
 							"error",
 						);
 						return;
 					}
 
-					ctx.ui.notify("✅ Setup script completed.", "success");
-				}
+					ensureBasePathGitignore(basePathResult.resolvedBase);
 
-				// Mark setup as done (no script = trivially done)
-				state.worktree = { ...state.worktree!, setupScriptRan: true };
-				saveImplState(projectRoot, state);
+					ctx.ui.notify("Creating implementation worktree...", "info");
+					const worktreeResult = await createWorktree(
+						cwd, // triggeringCwd (for reading HEAD)
+						projectRoot,
+						shortName,
+						implTimestamp,
+						basePathResult.resolvedBase,
+					);
+
+					if (!worktreeResult.ok) {
+						state.lastError = {
+							timestamp: new Date().toISOString(),
+							agent: "worktree-setup",
+							role: "implementer",
+							exitCode: 1,
+							stderr: worktreeResult.error,
+							errorType: "VALIDATION",
+							agentTask: "", // Not retryable via agent — no agentTask (FR-3.4)
+						};
+						saveImplState(projectRoot, state);
+						ctx.ui.notify(
+							`Failed to create worktree: ${worktreeResult.error}`,
+							"error",
+						);
+						return;
+					}
+
+					const worktreeMeta = worktreeResult.meta;
+
+					// Persist worktree metadata immediately (FR-5.1)
+					state.worktree = { ...worktreeMeta };
+					saveImplState(projectRoot, state);
+
+					ctx.ui.notify(
+						`✅ Worktree: ${worktreeMeta.path}\n   Branch: ${worktreeMeta.branch}`,
+						"info",
+					);
+
+					workRoot = worktreeMeta.path;
+
+					// ============================================================
+					// SETUP SCRIPT (FR-3.4, FR-3.7)
+					// ============================================================
+					if (projectConfig.worktree.setupScript) {
+						ctx.ui.notify("🔧 Running setup script...", "info");
+						const scriptResult = await runSetupScript(
+							projectConfig.worktree.setupScript,
+							worktreeMeta,
+							projectRoot,
+							state.id,
+						);
+
+						if (!scriptResult.ok) {
+							state.lastError = {
+								timestamp: new Date().toISOString(),
+								agent: "setup-script",
+								role: "implementer",
+								exitCode: scriptResult.exitCode,
+								stderr: scriptResult.outputTail,
+								errorType: "VALIDATION",
+								agentTask: "", // Not retryable via agent — resume must re-run the script (FR-3.4)
+							};
+							saveImplState(projectRoot, state);
+							ctx.ui.notify(
+								[
+									`❌ Setup script failed (exit code ${scriptResult.exitCode}).`,
+									"",
+									"Last output:",
+									scriptResult.outputTail,
+									"",
+									`Full log: ${scriptResult.logPath}`,
+									"",
+									`Worktree kept at: ${worktreeMeta.path}`,
+									"Fix the issue and use /implement-resume to retry the setup script.",
+								].join("\n"),
+								"error",
+							);
+							return;
+						}
+
+						ctx.ui.notify("✅ Setup script completed.", "success");
+					}
+
+					// Mark setup as done (no script = trivially done)
+					state.worktree = { ...state.worktree!, setupScriptRan: true };
+					saveImplState(projectRoot, state);
+				}
 
 				updateImplWidget(ctx, state, "Initializing...");
 
