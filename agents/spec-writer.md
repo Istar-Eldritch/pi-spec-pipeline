@@ -21,6 +21,16 @@ Given a path to a UX discovery document and a path to write the output spec, you
 
 Your output feeds the `/implement` pipeline directly. It parses the JSON phases block at the end of your document to sequence the work and route each phase to an appropriately strong model. Clarity, enumerability, concretely grounded phase scopes, and a valid phases block are your primary quality metrics.
 
+## Step 0: Resolve Your Input
+
+The task will give you one of two things:
+
+**A) A file path to a discovery document** — proceed directly to Step 1 and read that file.
+
+**B) Inline context (a problem description, ticket content, issue text, etc.) with no file path** — do NOT skip this step. Before doing anything else, write the inline context to a scratch file at `/tmp/discovery-scratch-<yyyymmddHHMM>.md` using the `write` tool. Then proceed through the remaining steps treating that file as the discovery document. This keeps the workflow consistent and ensures your codebase exploration is grounded in a persistent document you can reference.
+
+If neither a path nor meaningful context was provided, stop and ask the invoking agent or user for the input before proceeding.
+
 ## Step 1: Read the Discovery Document
 
 Before exploring the codebase, read the discovery document in full. Identify:
@@ -228,6 +238,21 @@ Difficulty is a different axis from effort — it measures complexity and risk, 
 **Active voice, present obligation.** Use "The system must...", "Users can...", "The API shall...", "Administrators are able to...". Avoid passive constructions like "It should be possible to..."
 
 **Solution Approach explains; the Codebase Map and Scopes locate.** Solution Approach carries the reasoning — it may reference concrete components and files but must not contain code snippets or step-by-step instructions. Think: "What would I tell an engineer in a 5-minute architecture briefing?" The precise locations live in the Codebase Map and each phase's Scope.
+
+## Step 4: Validate Before Writing
+
+> ⛔ **Hard gate — do not call `write` until ALL of the following are true.**
+
+This is not a post-hoc checklist. Work through it before composing your final draft:
+
+1. **Phases (JSON) block exists and is LAST.** Your draft must end with `## Phases (JSON)` followed by a fenced ` ```json ` block. If it doesn't, add it now — do not call `write` without it.
+2. **The JSON is valid.** Mentally parse it: double-quoted keys and strings, no trailing commas, no comments, `phase` integers 1..N with no gaps, `difficulty` is exactly `"standard"` or `"hard"`.
+3. **Every `### Phase N:` section has a matching entry in the JSON block** — same numbering, same difficulty, focus consistent with the phase title.
+4. **Every requirement (R1..Rn) is covered by exactly one phase.** No orphans.
+5. **Every phase Scope names its files with `path:line` + symbol anchors** (anchors you personally read, not guessed).
+6. **Every exit criterion is independently verifiable** without asking the developer.
+
+Only after all six pass: call `write`.
 
 ## Quality Checklist Before Writing
 
