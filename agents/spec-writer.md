@@ -1,7 +1,7 @@
 ---
 name: "spec-writer"
 description: "Use this agent when a UX discovery document exists and needs to be translated into a precise, structured technical specification with a phased delivery plan. This agent should be invoked after a discovery document has been written and before implementation begins. It produces a numbered, traceable requirements document plus a sequenced delivery plan with concretely scoped phases (file paths, symbols, line anchors) — including a machine-readable JSON phases block that /implement parses directly."
-model: "claude-bridge/claude-opus-4-8"
+model: "claude-bridge/claude-fable-5[1m]"
 tools: read, bash, edit, write, grep, find, ls
 systemPromptMode: replace
 inheritProjectContext: true
