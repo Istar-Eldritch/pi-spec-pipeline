@@ -599,6 +599,17 @@ async function _runImplementPipelineInner(
 			state.reviewCyclesCompleted = 0;
 			state.implementerCompletedForPhase = false;
 		}
+
+		// Snapshot the worktree HEAD at the very start of this phase (once only).
+		// This lets the implementer validation below detect orphaned commits:
+		// commits the user manually made between runs (e.g. after committing a
+		// dirty worktree left by a crashed implementer) still count as phase work.
+		if (!state.phaseBaseHeads) {
+			state.phaseBaseHeads = new Array(state.phases.length).fill(undefined);
+		}
+		if (state.phaseBaseHeads[phaseIdx] === undefined) {
+			state.phaseBaseHeads[phaseIdx] = (await getHeadCommit(workRoot)) ?? undefined;
+		}
 		save();
 
 		const phasePath = state.phases[phaseIdx];
@@ -924,15 +935,39 @@ Address all issues raised in the review.`;
 					const modified = preImplementationHead
 						? await getChangedFilesSince(workRoot, preImplementationHead)
 						: await getModifiedFiles(workRoot);
-					if (modified.length === 0) {
-						return (
-							`Implementer made no file changes in the worktree (${workRoot}) — ` +
-							`no commits since ${preImplementationHead ?? "start"} and no uncommitted ` +
-							`changes. Every implementation must edit files inside this directory. ` +
-							`Verify the agent ran its commands here and did not cd to another checkout.`
-						);
+					if (modified.length > 0) {
+						return undefined;
 					}
-					return undefined;
+
+					// Secondary check: orphaned commits. If the user manually committed a
+					// dirty worktree between pipeline runs (e.g. after a crash left
+					// uncommitted work), those commits are already in HEAD when the next
+					// implementer run starts. The primary check above sees 0 changes since
+					// `preImplementationHead` (the manual commit), but there ARE real changes
+					// since `phaseBaseHeads[phaseIdx]` (captured before any work happened).
+					// Accept those as the implementation rather than failing.
+					const phaseBase = state.phaseBaseHeads?.[phaseIdx];
+					if (
+						phaseBase &&
+						phaseBase !== preImplementationHead
+					) {
+						const orphaned = await getChangedFilesSince(workRoot, phaseBase);
+						if (orphaned.length > 0) {
+							ctx.ui.notify(
+								`⚡ Phase ${phaseIdx + 1}: found ${orphaned.length} file(s) changed via ` +
+								`manual commits since phase start — treating as implementer work`,
+								"info",
+							);
+							return undefined;
+						}
+					}
+
+					return (
+						`Implementer made no file changes in the worktree (${workRoot}) — ` +
+						`no commits since ${preImplementationHead ?? "start"} and no uncommitted ` +
+						`changes. Every implementation must edit files inside this directory. ` +
+						`Verify the agent ran its commands here and did not cd to another checkout.`
+					);
 				},
 				onAttempt: ({ config, startTime, result }) => {
 					recordAgentCall(
@@ -1212,6 +1247,11 @@ Make the necessary fixes.`,
 		state.reviewCyclesCompleted = 0;
 		state.implementerCompletedForPhase = false;
 		state.lastError = undefined;
+		// Clear the phase-base-head snapshot so a future retry of this phase
+		// (if it ever re-runs) captures a fresh baseline.
+		if (state.phaseBaseHeads) {
+			state.phaseBaseHeads[phaseIdx] = undefined;
+		}
 		save();
 
 		ctx.ui.notify(

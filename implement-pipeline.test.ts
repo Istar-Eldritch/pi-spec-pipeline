@@ -1,5 +1,13 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import * as path from "node:path";
 import { extractPhases } from "./implement-pipeline.ts";
+import {
+	execGit,
+	getChangedFilesSince,
+	getHeadCommit,
+} from "./git.ts";
 
 // Common test parameters
 const TIMESTAMP = "2602071200";
@@ -811,5 +819,90 @@ describe("/implement input contract (FR-2.2)", () => {
 			const looksLikeFilePath = arg.includes("/") || /\.(md|typ)$/i.test(arg);
 			expect(looksLikeFilePath).toBe(true);
 		}
+	});
+});
+
+// ============================================
+// Orphaned-commit detection (phaseBaseHeads)
+// ============================================
+// Tests for the git helpers used by the orphaned-commit logic in the
+// implementer validate callback: confirm that getChangedFilesSince correctly
+// distinguishes commits made before vs. after a snapshot.
+
+describe("orphaned-commit detection helpers", () => {
+	let repoDir: string;
+
+	beforeEach(async () => {
+		repoDir = await mkdtemp(path.join(tmpdir(), "pipeline-orphan-test-"));
+		await execGit(repoDir, ["init"]);
+		await execGit(repoDir, ["config", "user.email", "test@test.com"]);
+		await execGit(repoDir, ["config", "user.name", "Test"]);
+		await writeFile(path.join(repoDir, "base.txt"), "base");
+		await execGit(repoDir, ["add", "."]);
+		await execGit(repoDir, ["commit", "-m", "initial"]);
+	});
+
+	afterEach(async () => {
+		await rm(repoDir, { recursive: true, force: true });
+	});
+
+	it("getChangedFilesSince returns empty list when HEAD matches snapshot", async () => {
+		const head = await getHeadCommit(repoDir);
+		expect(head).toBeDefined();
+		const changed = await getChangedFilesSince(repoDir, head!);
+		expect(changed).toHaveLength(0);
+	});
+
+	it("detects file committed AFTER the snapshot (simulates user manually committing orphan work)", async () => {
+		// Capture the base HEAD — this is what phaseBaseHeads[N] would store
+		const phaseBaseHead = await getHeadCommit(repoDir);
+		expect(phaseBaseHead).toBeDefined();
+
+		// User manually commits dirty work (the crash-then-commit scenario)
+		await writeFile(path.join(repoDir, "phase_work.rs"), "fn foo() {}");
+		await execGit(repoDir, ["add", "."]);
+		await execGit(repoDir, ["commit", "-m", "wip"]);
+
+		// preImplementationHead is now the manual commit — same as HEAD
+		const preImplementationHead = await getHeadCommit(repoDir);
+
+		// Primary check (against preImplementationHead): sees 0 changes — would
+		// normally trigger the "no file changes" error
+		const modifiedThisRun = await getChangedFilesSince(
+			repoDir,
+			preImplementationHead!,
+		);
+		expect(modifiedThisRun).toHaveLength(0);
+
+		// Secondary check (against phaseBaseHead): sees the orphaned commit
+		const orphaned = await getChangedFilesSince(repoDir, phaseBaseHead!);
+		expect(orphaned).toContain("phase_work.rs");
+		expect(orphaned.length).toBeGreaterThan(0);
+	});
+
+	it("does NOT false-positive when nothing has changed since phase base", async () => {
+		const phaseBaseHead = await getHeadCommit(repoDir);
+		const preImplementationHead = await getHeadCommit(repoDir);
+		// Both snapshots are the same (no commits at all)
+		expect(phaseBaseHead).toEqual(preImplementationHead);
+
+		// Both checks should return 0 — correctly fails validation
+		const modified = await getChangedFilesSince(repoDir, preImplementationHead!);
+		expect(modified).toHaveLength(0);
+		const orphaned = await getChangedFilesSince(repoDir, phaseBaseHead!);
+		expect(orphaned).toHaveLength(0);
+	});
+
+	it("does NOT false-positive when phaseBase equals preImplementationHead (no manual commits)", async () => {
+		// Implementer commits its own work (the normal happy path)
+		await writeFile(path.join(repoDir, "src.rs"), "fn main() {}");
+		await execGit(repoDir, ["add", "."]);
+		await execGit(repoDir, ["commit", "-m", "impl: phase work"]);
+
+		const phaseBaseHead = await getHeadCommit(repoDir);
+		const preImplementationHead = phaseBaseHead; // same — no manual commit in between
+
+		// Both are equal → secondary orphan check is skipped in the pipeline
+		expect(phaseBaseHead).toEqual(preImplementationHead);
 	});
 });

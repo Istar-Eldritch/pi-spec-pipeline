@@ -330,6 +330,15 @@ export interface ImplementationState {
 	// Commit tracking
 	phaseCommits: boolean[][]; // phaseCommits[phaseIdx][cycleIdx]
 
+	/**
+	 * The HEAD commit at the very start of each phase (before any implementer
+	 * or manual commit runs). Stored once and never overwritten for a given
+	 * phase so that orphaned commits made by the user between pipeline runs
+	 * (e.g. manually committing a dirty worktree after a crash) are still
+	 * counted as phase work and don't cause a spurious "no file changes" error.
+	 */
+	phaseBaseHeads?: (string | undefined)[];
+
 	// Git state
 	checkpoints?: string[];
 	errorStash?: string;
