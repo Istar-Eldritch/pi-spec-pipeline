@@ -220,6 +220,35 @@ export async function getChangedFilesSince(
 }
 
 /**
+ * List commit hashes reachable from HEAD but NOT from `baseRef` (i.e. commits
+ * made after `baseRef`), newest-first. Returns `[]` when `baseRef` is
+ * undefined, unresolvable, or when no commits were made since it.
+ *
+ * Unlike {@link getChangedFilesSince} (which inspects the working tree), this
+ * returns the *commits themselves* — so work an agent self-committed (leaving
+ * a clean working tree) is still observable. Used to record the real commits
+ * produced during a phase and to detect that a phase is already complete.
+ */
+export async function getCommitsSince(
+	cwd: string,
+	baseRef: string | undefined,
+): Promise<string[]> {
+	if (!baseRef) return [];
+	// `git rev-list baseRef..HEAD` exits non-zero when baseRef is not a valid
+	// ref (e.g. an unborn branch with no commits yet) — treat as "no commits".
+	const result = await execGit(cwd, [
+		"rev-list",
+		"--no-show-signature",
+		`${baseRef}..HEAD`,
+	]);
+	if (result.code !== 0) return [];
+	return result.stdout
+		.split("\n")
+		.map((line) => line.trim())
+		.filter((line) => line.length > 0);
+}
+
+/**
  * Stage specific files (not all files)
  * Handles modifications, deletions, and renames
  * Returns true if staging was successful

@@ -3,6 +3,7 @@ import {
 	extractCommitMessage,
 	captureGitStatus,
 	getChangedFilesSince,
+	getCommitsSince,
 	getHeadCommit,
 	getModifiedFiles,
 	stageFiles,
@@ -319,6 +320,54 @@ describe("Git file tracking utilities", () => {
 			const files = await getChangedFilesSince(testDir, base as string);
 			expect(files).toContain("committed.txt");
 			expect(files).toContain("pending.txt");
+		});
+	});
+
+	describe("getCommitsSince", () => {
+		it("returns [] when baseRef is undefined", async () => {
+			const commits = await getCommitsSince(testDir, undefined);
+			expect(commits).toEqual([]);
+		});
+
+		it("returns [] when no commits were made since baseRef", async () => {
+			const base = await getHeadCommit(testDir);
+			const commits = await getCommitsSince(testDir, base as string);
+			expect(commits).toEqual([]);
+		});
+
+		it("lists commits made since baseRef, newest-first", async () => {
+			const base = await getHeadCommit(testDir);
+			await writeFile(join(testDir, "a.txt"), "A\n");
+			await execGit(testDir, ["add", "-A"]);
+			await execGit(testDir, ["commit", "-m", "feat: first"]);
+			await writeFile(join(testDir, "b.txt"), "B\n");
+			await execGit(testDir, ["add", "-A"]);
+			await execGit(testDir, ["commit", "-m", "feat: second"]);
+
+			const commits = await getCommitsSince(testDir, base as string);
+			expect(commits).toHaveLength(2);
+			// newest-first
+			const head = await getHeadCommit(testDir);
+			expect(commits[0]).toBe(head);
+		});
+
+		it("detects an agent self-commit that leaves a clean working tree", async () => {
+			// Regression: a self-committing agent leaves a clean tree, so the old
+			// `getModifiedFiles`-only check saw nothing. `getCommitsSince` must
+			// still surface the commit so phaseCommits gets populated.
+			const base = await getHeadCommit(testDir);
+			await writeFile(join(testDir, "feature.txt"), "New\n");
+			await execGit(testDir, ["add", "-A"]);
+			await execGit(testDir, ["commit", "-m", "feat(x): agent self-commit"]);
+			expect(await getModifiedFiles(testDir)).toEqual([]); // clean tree
+
+			const commits = await getCommitsSince(testDir, base as string);
+			expect(commits).toHaveLength(1);
+		});
+
+		it("returns [] when baseRef is not a valid ref", async () => {
+			const commits = await getCommitsSince(testDir, "deadbeefnotarealref");
+			expect(commits).toEqual([]);
 		});
 	});
 
