@@ -107,6 +107,107 @@ describe("loadImplState escalations migration", () => {
 });
 
 // ============================================
+// phaseCommits boolean[][] → string[][] migration
+// ============================================
+
+describe("loadImplState phaseCommits migration", () => {
+	let tmpDir: string;
+
+	beforeEach(() => {
+		tmpDir = fs.mkdtempSync(
+			path.join(os.tmpdir(), "impl-state-phasecommits-test-"),
+		);
+	});
+
+	afterEach(() => {
+		fs.rmSync(tmpDir, { recursive: true, force: true });
+	});
+
+	function writeRawState(id: string, raw: object): void {
+		const stateDir = getImplStateDir(tmpDir);
+		fs.mkdirSync(stateDir, { recursive: true });
+		fs.writeFileSync(getImplStatePath(tmpDir, id), JSON.stringify(raw), "utf-8");
+	}
+
+	// Regression: older states recorded `phaseCommits: boolean[][]` with `true`
+	// presence markers. The field is now `string[][]` of commit hashes. Legacy
+	// booleans coerce to "" (placeholder) so the array type/length stays sane.
+	it("coerces legacy boolean[][] phaseCommits to string[][] on load", () => {
+		writeRawState("legacy-bool", {
+			id: "legacy-bool",
+			implTimestamp: "2606091200",
+			specPath: "docs/spec.md",
+			specContent: "# Spec",
+			stage: "implementation",
+			createdAt: new Date().toISOString(),
+			updatedAt: new Date().toISOString(),
+			phases: ["phase 1", "phase 2"],
+			phasesGenerated: [true, true],
+			currentPhaseIndex: 0,
+			currentReviewCycle: 1,
+			previousReview: "",
+			phaseCommits: [[true], [true, true]],
+		});
+
+		const loaded = loadImplState(tmpDir, "legacy-bool");
+		expect(loaded).not.toBeNull();
+		// Every entry is now a string; length preserved.
+		expect(loaded!.phaseCommits).toEqual([[""], ["", ""]]);
+		for (const arr of loaded!.phaseCommits) {
+			for (const entry of arr) {
+				expect(typeof entry).toBe("string");
+			}
+		}
+	});
+
+	it("preserves string[][] phaseCommits with real hashes", () => {
+		writeRawState("modern-str", {
+			id: "modern-str",
+			implTimestamp: "2606091200",
+			specPath: "docs/spec.md",
+			specContent: "# Spec",
+			stage: "implementation",
+			createdAt: new Date().toISOString(),
+			updatedAt: new Date().toISOString(),
+			phases: ["phase 1"],
+			phasesGenerated: [true],
+			currentPhaseIndex: 0,
+			currentReviewCycle: 1,
+			previousReview: "",
+			phaseCommits: [["abc123", "def456"]],
+			phaseStartHead: "base000",
+		});
+
+		const loaded = loadImplState(tmpDir, "modern-str");
+		expect(loaded).not.toBeNull();
+		expect(loaded!.phaseCommits).toEqual([["abc123", "def456"]]);
+		expect(loaded!.phaseStartHead).toBe("base000");
+	});
+
+	it("initializes phaseCommits to [] when the field is absent", () => {
+		writeRawState("missing-field", {
+			id: "missing-field",
+			implTimestamp: "2606091200",
+			specPath: "docs/spec.md",
+			specContent: "# Spec",
+			stage: "implementation",
+			createdAt: new Date().toISOString(),
+			updatedAt: new Date().toISOString(),
+			phases: [],
+			phasesGenerated: [],
+			currentPhaseIndex: 0,
+			currentReviewCycle: 1,
+			previousReview: "",
+			// NOTE: no phaseCommits field
+		});
+
+		const loaded = loadImplState(tmpDir, "missing-field");
+		expect(loaded).not.toBeNull();
+		expect(loaded!.phaseCommits).toEqual([]);
+	});
+});
+
+// ============================================
 // Worktree metadata round-trip (FR-7.4)
 // ============================================
 

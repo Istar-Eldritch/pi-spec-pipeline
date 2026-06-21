@@ -349,16 +349,25 @@ export interface ImplementationState {
 	implementerCompletedForPhase?: boolean;
 
 	// Commit tracking
-	phaseCommits: boolean[][]; // phaseCommits[phaseIdx][cycleIdx]
-
 	/**
-	 * The HEAD commit at the very start of each phase (before any implementer
-	 * or manual commit runs). Stored once and never overwritten for a given
-	 * phase so that orphaned commits made by the user between pipeline runs
-	 * (e.g. manually committing a dirty worktree after a crash) are still
-	 * counted as phase work and don't cause a spurious "no file changes" error.
+	 * Real commit hashes produced for each phase (`phaseCommits[phaseIdx]`),
+	 * in chronological order. Includes both pipeline-created commits and
+	 * commits an agent self-made during the phase. Previously this was a
+	 * `boolean[][]` (presence-only); it now records hashes so committed work
+	 * is verifiable on resume.
 	 */
-	phaseBaseHeads?: (string | undefined)[];
+	phaseCommits: string[][]; // phaseCommits[phaseIdx][commitIdx]
+	/**
+	 * HEAD captured at the start of the current phase. Used to detect work an
+	 * agent committed during the phase (including self-commits that leave a
+	 * clean working tree) and to recognize an already-complete phase. Also
+	 * covers orphaned commits — a user manually committing a dirty worktree
+	 * between pipeline runs (e.g. after a crash) — since those commits land
+	 * between this snapshot and the next implementer run and are picked up by
+	 * `getCommitsSince`. Set when a phase begins; absent on legacy states
+	 * (filled in on the next phase).
+	 */
+	phaseStartHead?: string;
 
 	// Git state
 	checkpoints?: string[];

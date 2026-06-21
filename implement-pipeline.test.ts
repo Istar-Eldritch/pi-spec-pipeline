@@ -823,11 +823,13 @@ describe("/implement input contract (FR-2.2)", () => {
 });
 
 // ============================================
-// Orphaned-commit detection (phaseBaseHeads)
+// Orphaned-commit detection (phaseStartHead + getCommitsSince)
 // ============================================
 // Tests for the git helpers used by the orphaned-commit logic in the
 // implementer validate callback: confirm that getChangedFilesSince correctly
-// distinguishes commits made before vs. after a snapshot.
+// distinguishes commits made before vs. after a snapshot. Formerly backed by
+// a dedicated `phaseBaseHeads` array; that mechanism was retired in favor of
+// `phaseStartHead`, which already covers this case via `getCommitsSince`.
 
 describe("orphaned-commit detection helpers", () => {
 	let repoDir: string;
@@ -854,7 +856,7 @@ describe("orphaned-commit detection helpers", () => {
 	});
 
 	it("detects file committed AFTER the snapshot (simulates user manually committing orphan work)", async () => {
-		// Capture the base HEAD — this is what phaseBaseHeads[N] would store
+		// Capture the base HEAD — this is what phaseStartHead would store
 		const phaseBaseHead = await getHeadCommit(repoDir);
 		expect(phaseBaseHead).toBeDefined();
 

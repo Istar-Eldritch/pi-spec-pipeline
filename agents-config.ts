@@ -407,9 +407,19 @@ Prevents worker from hanging on connection loss.
 
 Output ONLY the commit message, nothing else.`,
 
-		addressReview: `You are addressing code review feedback.
+		addressReview: `You are addressing code review feedback for ONE implementation phase.
 
 Fix issues raised in the code review, following project conventions.
+
+## Phase Scope
+
+You are fixing issues for the CURRENT phase only. Do NOT implement deliverables
+that belong to LATER phases — each later phase has its own implementation step
+and plan. If a review finding would require future-phase work (e.g. a missing
+test that a later phase is scheduled to add), note it as a recommendation for
+that phase instead of implementing it now. Implementing future-phase work here
+breaks the phased delivery plan and causes later phases to fail with "no changes
+needed".
 
 ${fixerContext}
 ## Process

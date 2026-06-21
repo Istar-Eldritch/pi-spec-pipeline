@@ -24,6 +24,7 @@ import {
 	createAgentCommit,
 	createCommit,
 	getChangedFilesSince,
+	getCommitsSince,
 	getHeadCommit,
 	getModifiedFiles,
 } from "./git.ts";
@@ -598,17 +599,11 @@ async function _runImplementPipelineInner(
 		if (!resumingMidPhase) {
 			state.reviewCyclesCompleted = 0;
 			state.implementerCompletedForPhase = false;
-		}
-
-		// Snapshot the worktree HEAD at the very start of this phase (once only).
-		// This lets the implementer validation below detect orphaned commits:
-		// commits the user manually made between runs (e.g. after committing a
-		// dirty worktree left by a crashed implementer) still count as phase work.
-		if (!state.phaseBaseHeads) {
-			state.phaseBaseHeads = new Array(state.phases.length).fill(undefined);
-		}
-		if (state.phaseBaseHeads[phaseIdx] === undefined) {
-			state.phaseBaseHeads[phaseIdx] = (await getHeadCommit(workRoot)) ?? undefined;
+			// Snapshot HEAD at phase start so STEP 5 can record the real commits an
+			// agent makes during the phase (including self-commits that leave a
+			// clean working tree), and so the implementer validator can recognize
+			// an already-complete phase. Persisted for resume-safety.
+			state.phaseStartHead = await getHeadCommit(workRoot);
 		}
 		save();
 
@@ -921,52 +916,66 @@ Address all issues raised in the review.`;
 				onOutput: implProgressCallback, // ← Pass callback (R18)
 				sessionDir,
 				validate: async (result) => {
-					// Zero changes in the worktree is ALWAYS a failure, regardless of how
-					// much the agent narrated. The implementer's job is to modify files in
-					// `workRoot`; an empty tree means it either did nothing or (the failure
-					// this guard exists to catch) operated on a different directory and its
-					// work was silently lost.
-					//
-					// The check is commit-aware: changes are measured against the HEAD
-					// captured before the implementer ran, so an agent that commits its
-					// own work (clean tree, new commits) still passes. Previously only
-					// the uncommitted working tree was inspected, which false-positived
-					// on self-committing implementers.
-					const modified = preImplementationHead
+					// Did THIS run make changes (committed or uncommitted)? Measure
+					// against the HEAD captured just before the implementer ran, so a
+					// self-committing implementer (clean tree, new commits) still passes.
+					const modifiedThisRun = preImplementationHead
 						? await getChangedFilesSince(workRoot, preImplementationHead)
 						: await getModifiedFiles(workRoot);
-					if (modified.length > 0) {
+					if (modifiedThisRun.length > 0) {
 						return undefined;
 					}
 
-					// Secondary check: orphaned commits. If the user manually committed a
-					// dirty worktree between pipeline runs (e.g. after a crash left
-					// uncommitted work), those commits are already in HEAD when the next
-					// implementer run starts. The primary check above sees 0 changes since
-					// `preImplementationHead` (the manual commit), but there ARE real changes
-					// since `phaseBaseHeads[phaseIdx]` (captured before any work happened).
-					// Accept those as the implementation rather than failing.
-					const phaseBase = state.phaseBaseHeads?.[phaseIdx];
-					if (
-						phaseBase &&
-						phaseBase !== preImplementationHead
-					) {
-						const orphaned = await getChangedFilesSince(workRoot, phaseBase);
-						if (orphaned.length > 0) {
+					// No changes this run. Is the phase already done — i.e. did an
+					// earlier step in THIS phase (a prior implementer attempt, or
+					// an addressReview fix) already commit work since the phase
+					// started? If so, a no-op implementer run is a correct
+					// verification, not a failure. This is the guard that prevents an
+					// already-complete phase from looping forever on "made no changes".
+					// This also subsumes the orphaned-commit case (a user manually
+					// committing a dirty worktree left by a crashed implementer between
+					// pipeline runs): any such commit lands between phaseStartHead and
+					// now and is picked up here.
+					const phaseStartHead = state.phaseStartHead;
+					if (phaseStartHead) {
+						const priorPhaseCommits = await getCommitsSince(
+							workRoot,
+							phaseStartHead,
+						);
+						if (priorPhaseCommits.length > 0) {
 							ctx.ui.notify(
-								`⚡ Phase ${phaseIdx + 1}: found ${orphaned.length} file(s) changed via ` +
-								`manual commits since phase start — treating as implementer work`,
+								`Phase ${phaseIdx + 1} already implemented — ` +
+									`${priorPhaseCommits.length} commit(s) since phase start; ` +
+									`implementer made no new changes (treated as complete).`,
 								"info",
 							);
 							return undefined;
 						}
 					}
 
+					// Legacy resume fallback: if commits were already recorded for this
+					// phase (e.g. a pre-`phaseStartHead` state resumed mid-phase), the
+					// phase is already done — accept the no-op.
+					if ((state.phaseCommits[phaseIdx] ?? []).length > 0) {
+						ctx.ui.notify(
+							`Phase ${phaseIdx + 1} already committed in a prior run ` +
+								`(recorded ${(state.phaseCommits[phaseIdx] ?? []).length} commit(s)); ` +
+								`implementer made no new changes (treated as complete).`,
+							"info",
+						);
+						return undefined;
+					}
+
+					// Genuine no-op: nothing this run AND nothing committed this phase.
+					// This means the implementer either did nothing or operated on a
+					// different directory and its work was silently lost.
 					return (
 						`Implementer made no file changes in the worktree (${workRoot}) — ` +
 						`no commits since ${preImplementationHead ?? "start"} and no uncommitted ` +
-						`changes. Every implementation must edit files inside this directory. ` +
-						`Verify the agent ran its commands here and did not cd to another checkout.`
+						`changes, and no prior commits since phase start ` +
+						`(${phaseStartHead ?? "unknown"}). Every implementation must edit files ` +
+						`inside this directory. Verify the agent ran its commands here and did ` +
+						`not cd to another checkout.`
 					);
 				},
 				onAttempt: ({ config, startTime, result }) => {
@@ -1184,13 +1193,13 @@ ${phasePlan}
 
 Check if the implementation matches the plan and follows project conventions.
 ${projectConfig.testCommand ? `Verify tests pass with: ${projectConfig.testCommand}` : ""}`,
-				fixTask: (reviewOutput) => `Address these code review findings:
+				fixTask: (reviewOutput) => `Address these code review findings for Phase ${phaseIdx + 1} (${phaseName}):
 
 ${reviewOutput}
 
 ${projectConfig.testCommand ? `Run tests with: ${projectConfig.testCommand}` : ""}
 
-Make the necessary fixes.`,
+Make the necessary fixes. Stay within the scope of Phase ${phaseIdx + 1} (${phaseName}) — do NOT implement deliverables that belong to later phases; each later phase has its own implementation step. If a finding requires future-phase work, note it as a recommendation for that phase instead of implementing it now.`,
 				runAddressReviewOnSignificantIssues: true,
 			},
 		);
@@ -1220,8 +1229,23 @@ Make the necessary fixes.`,
 		save();
 
 		// ========================================
-		// STEP 5: Create Commit for Phase (if uncommitted changes remain)
+		// STEP 5: Record commits for this phase, then commit any remainder
 		// ========================================
+		// Capture every commit made since the phase started — including commits
+		// an agent self-made (implementer / addressReview) that left a clean
+		// working tree. Previously only the uncommitted tree was inspected, so
+		// self-commits were silently lost and phaseCommits stayed empty.
+		const phaseStartHead = state.phaseStartHead;
+		const agentCommits = await getCommitsSince(workRoot, phaseStartHead);
+		if (!state.phaseCommits[phaseIdx]) {
+			state.phaseCommits[phaseIdx] = [];
+		}
+		for (const hash of agentCommits) {
+			if (!state.phaseCommits[phaseIdx].includes(hash)) {
+				state.phaseCommits[phaseIdx].push(hash);
+			}
+		}
+
 		const remainingChanges = await getModifiedFiles(workRoot);
 		if (remainingChanges.length > 0) {
 			updateImplWidget(ctx, state, "Creating commit...");
@@ -1230,13 +1254,22 @@ Make the necessary fixes.`,
 			const phaseCommitMsg = `feat(phase-${phaseIdx + 1}): complete phase ${phaseIdx + 1} implementation`;
 			const committed = await createCommit(workRoot, phaseCommitMsg);
 			if (committed) {
-				if (!state.phaseCommits[phaseIdx]) {
-					state.phaseCommits[phaseIdx] = [];
+				const pipelineCommit = await getHeadCommit(workRoot);
+				if (
+					pipelineCommit &&
+					!state.phaseCommits[phaseIdx].includes(pipelineCommit)
+				) {
+					state.phaseCommits[phaseIdx].push(pipelineCommit);
 				}
-				state.phaseCommits[phaseIdx].push(true);
 				save();
 				ctx.ui.notify(`Phase ${phaseIdx + 1} committed`, "success");
 			}
+		} else if (agentCommits.length > 0) {
+			ctx.ui.notify(
+				`Phase ${phaseIdx + 1}: ${agentCommits.length} agent commit(s) recorded, no uncommitted changes`,
+				"info",
+			);
+			save();
 		} else {
 			ctx.ui.notify(`No uncommitted changes — skipping phase commit`, "info");
 		}
@@ -1247,11 +1280,6 @@ Make the necessary fixes.`,
 		state.reviewCyclesCompleted = 0;
 		state.implementerCompletedForPhase = false;
 		state.lastError = undefined;
-		// Clear the phase-base-head snapshot so a future retry of this phase
-		// (if it ever re-runs) captures a fresh baseline.
-		if (state.phaseBaseHeads) {
-			state.phaseBaseHeads[phaseIdx] = undefined;
-		}
 		save();
 
 		ctx.ui.notify(

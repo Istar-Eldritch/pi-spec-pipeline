@@ -67,3 +67,29 @@ describe("createSystemPrompts — workspace isolation injection", () => {
 		expect(prompts.implementer).toContain("/abs/worktree");
 	});
 });
+
+// Regression: a review-fix agent for phase N produced phase N+1's deliverables
+// ahead of schedule (epoch pipeline 20260621_090028_uprc), causing the later
+// phase to fail with "no changes needed". The addressReview prompt must scope
+// the agent to the CURRENT phase and forbid implementing later-phase work.
+describe("createSystemPrompts — addressReview phase scope", () => {
+	it("addressReview prompt constrains fixes to the current phase", () => {
+		const prompts = createSystemPrompts(
+			buildPromptOptions({ projectContext: "ctx" }),
+		);
+		expect(prompts.addressReview).toContain("Phase Scope");
+		expect(prompts.addressReview).toContain("CURRENT phase");
+		expect(prompts.addressReview).toContain("LATER phases");
+		expect(prompts.addressReview.toLowerCase()).toContain(
+			"do not implement deliverables",
+		);
+	});
+
+	it("non-fix roles are not polluted with the phase-scope directive", () => {
+		const prompts = createSystemPrompts(
+			buildPromptOptions({ projectContext: "ctx" }),
+		);
+		expect(prompts.implementer).not.toContain("Phase Scope");
+		expect(prompts.codeReviewer).not.toContain("Phase Scope");
+	});
+});

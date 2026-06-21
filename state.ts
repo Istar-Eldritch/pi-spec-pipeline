@@ -96,6 +96,26 @@ export function loadImplState(
 			needsSave = true;
 		}
 
+		// Migrate legacy `phaseCommits: boolean[][]` (presence-only `true`
+		// markers) to `string[][]` of commit hashes. The legacy hashes aren't
+		// recoverable, so coerce `true` → `""` (placeholder) to preserve array
+		// length; real hashes are recorded for new phases going forward.
+		if (Array.isArray(state.phaseCommits)) {
+			let phaseCommitsMigrated = false;
+			state.phaseCommits = state.phaseCommits.map((cycleArr) => {
+				if (!Array.isArray(cycleArr)) return [];
+				return cycleArr.map((entry) => {
+					if (typeof entry === "string") return entry;
+					phaseCommitsMigrated = true;
+					return "";
+				});
+			});
+			if (phaseCommitsMigrated) needsSave = true;
+		} else {
+			state.phaseCommits = [];
+			needsSave = true;
+		}
+
 		if (needsSave) {
 			try {
 				fs.writeFileSync(statePath, JSON.stringify(state, null, 2), "utf-8");
