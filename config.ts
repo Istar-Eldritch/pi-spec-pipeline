@@ -55,6 +55,19 @@ export const ROLE_TIERS: Record<string, TierName> = {
 	agentCommitMessageWriter: "cheap",
 };
 
+/**
+ * Default per-role model-stream idle budgets (ms), applied as the lowest-
+ * precedence default when neither the project config nor a per-role ModelConfig
+ * sets `streamIdleTimeoutMs`. The watchdog's process-wide default is 90s
+ * (see agents.ts), which murders a `codeReviewer` mid-thought: it runs with
+ * `thinking` and produces long silent gaps between tool calls. Give the reviewer
+ * a more generous budget so deep reviews aren't killed by a streaming-idle
+ * timeout. Other roles keep the 90s process default.
+ */
+export const DEFAULT_ROLE_STREAM_IDLE_TIMEOUT_MS: Record<string, number> = {
+	codeReviewer: 600_000, // 10 min — deep, thinking-heavy reviews
+};
+
 export const DEFAULT_ESCALATION = {
 	enabled: true,
 	hardFailureRetries: 1,
@@ -267,6 +280,22 @@ function mergeWithDefaults(
 				models[role] = {
 					...models[role],
 					toolStreamIdleTimeoutMs: projectToolStreamIdleTimeoutMs,
+				};
+			}
+		}
+	}
+
+	// Apply per-role default model-stream idle budgets as the lowest-precedence
+	// fallback (below project-level and per-role ModelConfig values). See
+	// DEFAULT_ROLE_STREAM_IDLE_TIMEOUT_MS for the codeReviewer rationale.
+	for (const role of Object.keys(models) as Array<keyof typeof models>) {
+		if (models[role].streamIdleTimeoutMs === undefined) {
+			const roleDefault =
+				DEFAULT_ROLE_STREAM_IDLE_TIMEOUT_MS[role as string];
+			if (roleDefault !== undefined) {
+				models[role] = {
+					...models[role],
+					streamIdleTimeoutMs: roleDefault,
 				};
 			}
 		}

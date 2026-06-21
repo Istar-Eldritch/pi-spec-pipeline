@@ -9,6 +9,7 @@ import {
 	DEFAULT_REVIEW_CYCLES,
 	DEFAULT_ESCALATION,
 	DEFAULT_WORKTREE_BASE_PATH,
+	DEFAULT_ROLE_STREAM_IDLE_TIMEOUT_MS,
 	loadPipelineConfig,
 	getEscalatedModelConfig,
 } from "./config.ts";
@@ -665,6 +666,76 @@ describe("tier streamIdleTimeoutMs normalization", () => {
 		writeConfig({ streamIdleTimeoutMs: 1_800_000 });
 		const config = loadConfig();
 		expect(config.tiers).toBeUndefined();
+	});
+});
+
+describe("role-default streamIdleTimeoutMs (codeReviewer)", () => {
+	let tmpDir: string;
+
+	beforeEach(() => {
+		tmpDir = fs.mkdtempSync(
+			path.join(os.tmpdir(), "config-role-timeout-test-"),
+		);
+		fs.mkdirSync(path.join(tmpDir, ".pi"), { recursive: true });
+	});
+
+	afterEach(() => {
+		fs.rmSync(tmpDir, { recursive: true, force: true });
+	});
+
+	function writeConfig(config: object): void {
+		fs.writeFileSync(
+			path.join(tmpDir, ".pi", "spec-pipeline.json"),
+			JSON.stringify(config),
+			"utf-8",
+		);
+	}
+
+	function loadConfig(): ProjectConfig {
+		const result = loadPipelineConfig(tmpDir);
+		if (!result.success) throw new Error((result as any).error);
+		return (result as any).config;
+	}
+
+	// Regression: a thinking-heavy codeReviewer produces long silent gaps
+	// between tool calls; the 90s process-wide watchdog default murders it
+	// mid-review (see the epoch pipeline failure 20260621_090028_uprc). The
+	// codeReviewer role gets a more generous default; other roles keep the
+	// 90s process default (undefined → watchdog fallback in agents.ts).
+	it("codeReviewer gets a generous default streamIdleTimeoutMs when unset", () => {
+		writeConfig({});
+		const config = loadConfig();
+		expect(config.models.codeReviewer.streamIdleTimeoutMs).toBe(
+			DEFAULT_ROLE_STREAM_IDLE_TIMEOUT_MS.codeReviewer,
+		);
+	});
+
+	it("non-reviewer roles keep streamIdleTimeoutMs undefined (process default)", () => {
+		writeConfig({});
+		const config = loadConfig();
+		expect(config.models.implementer.streamIdleTimeoutMs).toBeUndefined();
+		expect(config.models.planDrafter.streamIdleTimeoutMs).toBeUndefined();
+		expect(config.models.addressReview.streamIdleTimeoutMs).toBeUndefined();
+	});
+
+	it("project-level streamIdleTimeoutMs takes precedence over the codeReviewer default", () => {
+		writeConfig({ streamIdleTimeoutMs: 1_800_000 });
+		const config = loadConfig();
+		expect(config.models.codeReviewer.streamIdleTimeoutMs).toBe(1_800_000);
+	});
+
+	it("per-role codeReviewer.streamIdleTimeoutMs takes precedence over the default", () => {
+		writeConfig({
+			models: {
+				codeReviewer: {
+					model: "gpt-5.4",
+					thinking: "medium",
+					streamIdleTimeoutMs: 120_000,
+				},
+			},
+		});
+		const config = loadConfig();
+		expect(config.models.codeReviewer.streamIdleTimeoutMs).toBe(120_000);
 	});
 });
 
