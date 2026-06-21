@@ -242,6 +242,148 @@ function writeCacheDiff(
 	}
 }
 
+// ============================================
+// Streaming Idle-Timeout Watchdog
+// ============================================
+
+/**
+ * Idle budget (ms) for one of the two silence kinds a pi subprocess can show.
+ */
+export interface IdleWatchdogBudgets {
+	/** Budget for gaps while NO tool is executing (model-stream silence). 0 disables. */
+	streamIdleTimeoutMs: number;
+	/** Budget for gaps while a tool is executing (tool-execution silence). 0 disables. */
+	toolStreamIdleTimeoutMs: number;
+}
+
+/**
+ * Which budget elapsed when the watchdog fires.
+ */
+export type IdleWatchdogLabel = "model-stream" | "tool-execution";
+
+/**
+ * Information passed to `onFire` when the watchdog elapses.
+ */
+export interface IdleWatchdogFireInfo {
+	/** Which budget fired. */
+	label: IdleWatchdogLabel;
+	/** The budget that elapsed, in ms. */
+	budgetMs: number;
+}
+
+/**
+ * Options for constructing an {@link IdleWatchdog}.
+ */
+export interface IdleWatchdogOptions extends IdleWatchdogBudgets {
+	/** Called when the watchdog fires (budget elapsed with no events). */
+	onFire: (info: IdleWatchdogFireInfo) => void;
+	/** Injectable `setTimeout` for unit testing. Defaults to the global. */
+	setTimeoutFn?: typeof setTimeout;
+	/** Injectable `clearTimeout` for unit testing. Defaults to the global. */
+	clearTimeoutFn?: typeof clearTimeout;
+}
+
+/**
+ * Idle-timeout watchdog for a pi subprocess.
+ *
+ * pi emits events on stdout/stderr as it runs. Two distinct kinds of silence
+ * can occur, and they have very different meanings:
+ *
+ * 1. **Model-stream silence** — a gap between events while NO tool is
+ *    executing. This usually means the upstream LLM provider hung
+ *    (connection open but no tokens). The `streamIdleTimeoutMs` budget
+ *    catches this.
+ *
+ * 2. **Tool-execution silence** — a gap while a tool (e.g. `bash`) is
+ *    running. pi emits `tool_execution_start`, at most one
+ *    `tool_execution_update` near the start, and then NOTHING until the
+ *    tool finishes — even for a multi-minute `cargo test` run. This is
+ *    normal, NOT a hang: the tool has its own timeout (the bash `timeout`
+ *    arg, pi's tool timeout). Killing pi here is wrong; it murders healthy
+ *    subprocesses running legitimately long commands.
+ *
+ * The watchdog therefore picks the budget based on whether a tool is in
+ * flight. `toolStreamIdleTimeoutMs` defaults to 0 (disabled) so tool runs are
+ * bounded only by their own timeouts; set it to a positive value to also
+ * bound tool-run silence.
+ *
+ * The caller is responsible for calling `onEventData(parsedEvent)` for every
+ * parsed pi JSON event and `arm()` after each batch of events so the new
+ * budget takes effect.
+ */
+export class IdleWatchdog {
+	private toolsInFlight = 0;
+	private handle: NodeJS.Timeout | undefined;
+	private readonly streamMs: number;
+	private readonly toolMs: number;
+	private readonly onFire: (info: IdleWatchdogFireInfo) => void;
+	private readonly st: typeof setTimeout;
+	private readonly ct: typeof clearTimeout;
+
+	constructor(opts: IdleWatchdogOptions) {
+		this.streamMs = opts.streamIdleTimeoutMs;
+		this.toolMs = opts.toolStreamIdleTimeoutMs;
+		this.onFire = opts.onFire;
+		this.st = opts.setTimeoutFn ?? setTimeout;
+		this.ct = opts.clearTimeoutFn ?? clearTimeout;
+	}
+
+	/** True when at least one tool is currently executing. */
+	toolRunning(): boolean {
+		return this.toolsInFlight > 0;
+	}
+
+	/**
+	 * The current idle budget (ms) based on tool-execution state.
+	 * Returns 0 when the active budget is disabled.
+	 */
+	budget(): number {
+		return this.toolsInFlight > 0 ? this.toolMs : this.streamMs;
+	}
+
+	/**
+	 * (Re)arm the timer with the current budget. No-op if the current budget
+	 * is <= 0 (disabled). The label is captured at arm time so the `onFire`
+	 * callback always reports which budget actually elapsed, regardless of any
+	 * state change between arming and firing (none is possible during a true
+	 * idle gap, but capturing it is unambiguous and robust).
+	 */
+	arm(): void {
+		this.disarm();
+		const ms = this.budget();
+		if (ms <= 0) return;
+		const label: IdleWatchdogLabel =
+			this.toolsInFlight > 0 ? "tool-execution" : "model-stream";
+		this.handle = this.st(() => {
+			this.onFire({ label, budgetMs: ms });
+		}, ms);
+		// Don't keep the Node event loop alive solely for the watchdog.
+		(this.handle as { unref?: () => void })?.unref?.();
+	}
+
+	/** Clear any pending timer. */
+	disarm(): void {
+		if (this.handle) {
+			this.ct(this.handle);
+			this.handle = undefined;
+		}
+	}
+
+	/**
+	 * Track tool-execution lifecycle from a parsed pi JSON event. Non
+	 * tool-execution events are ignored. The counter supports parallel tool
+	 * calls (multiple `tool_execution_start` before any `end`).
+	 */
+	onEventData(event: { type?: string } | null | undefined): void {
+		if (!event) return;
+		if (event.type === "tool_execution_start") {
+			this.toolsInFlight++;
+		} else if (event.type === "tool_execution_end") {
+			this.toolsInFlight = Math.max(0, this.toolsInFlight - 1);
+		}
+	}
+}
+
 /**
  * Run a pi subprocess with explicit model configuration
  * This is the core agent runner that accepts ModelConfig directly.
@@ -369,30 +511,38 @@ export async function runAgentWithConfig(
 				stdio: ["ignore", "pipe", "pipe"],
 			});
 
-			// Streaming idle-timeout watchdog. If pi stops emitting any stdout/stderr
-			// for this long, kill it. Catches the "server stopped sending events but
-			// connection still open" hang documented in api-connection-report.md §5.2.
-			// Default mirrors Claude Code's CLAUDE_STREAM_IDLE_TIMEOUT_MS=90s.
-			// Resolution order: per-role ModelConfig > env var > 90s default.
-			// The project-level value (from .pi/spec-pipeline.json `streamIdleTimeoutMs`)
-			// is folded into per-role configs by mergeWithDefaults in config.ts.
-			const idleTimeoutMs =
+			// Streaming idle-timeout watchdog. Two budgets:
+			//  - streamIdleTimeoutMs: gaps while NO tool is running (model-stream
+			//    silence — catches a hung LLM provider connection).
+			//  - toolStreamIdleTimeoutMs: gaps while a tool IS running. pi emits no
+			//    heartbeat during tool execution, so this defaults to 0 (disabled)
+			//    and tools are bounded by their own timeouts (bash `timeout`, pi's
+			//    tool timeout). See IdleWatchdog above for the full rationale.
+			// Resolution order for each: per-role ModelConfig > env var > default.
+			// The project-level values (from .pi/spec-pipeline.json
+			// `streamIdleTimeoutMs` / `toolStreamIdleTimeoutMs`) are folded into
+			// per-role configs by mergeWithDefaults in config.ts.
+			const streamIdleTimeoutMs =
 				modelConfig.streamIdleTimeoutMs ??
-				(Number(process.env.SPEC_PIPELINE_STREAM_IDLE_TIMEOUT_MS) || 90_000);
-			let idleHandle: NodeJS.Timeout | undefined;
-			const armIdle = () => {
-				if (idleHandle) clearTimeout(idleHandle);
-				if (idleTimeoutMs <= 0) return;
-				idleHandle = setTimeout(() => {
-					error += `\n[spec-pipeline] streaming idle timeout: no events for ${idleTimeoutMs}ms — killing pi subprocess\n`;
+				(Number(process.env.SPEC_PIPELINE_STREAM_IDLE_TIMEOUT_MS) ||
+					90_000);
+			const toolStreamIdleTimeoutMs =
+				modelConfig.toolStreamIdleTimeoutMs ??
+				(Number(
+					process.env.SPEC_PIPELINE_TOOL_STREAM_IDLE_TIMEOUT_MS,
+				) || 0);
+			const watchdog = new IdleWatchdog({
+				streamIdleTimeoutMs,
+				toolStreamIdleTimeoutMs,
+				onFire: (info) => {
+					error += `\n[spec-pipeline] ${info.label} idle timeout: no events for ${info.budgetMs}ms — killing pi subprocess\n`;
 					proc?.kill("SIGTERM");
 					setTimeout(() => {
 						if (proc && !proc.killed) proc.kill("SIGKILL");
 					}, 5000);
-				}, idleTimeoutMs);
-				idleHandle.unref?.();
-			};
-			armIdle();
+				},
+			});
+			watchdog.arm();
 
 			let buffer = "";
 
@@ -400,6 +550,10 @@ export async function runAgentWithConfig(
 				if (!line.trim()) return;
 				try {
 					const event = JSON.parse(line);
+
+					// Track tool-execution lifecycle so the idle watchdog applies the
+					// correct budget (tool-execution vs model-stream).
+					watchdog.onEventData(event);
 
 					// Handle text delta events (for output accumulation and legacy callbacks)
 					if (
@@ -480,20 +634,22 @@ export async function runAgentWithConfig(
 			};
 
 			proc.stdout?.on("data", (data) => {
-				armIdle();
 				buffer += data.toString();
 				const lines = buffer.split("\n");
 				buffer = lines.pop() || "";
 				for (const line of lines) processLine(line);
+				// Re-arm AFTER processing: tool_execution_* events may switch the
+				// active budget between model-stream and tool-execution.
+				watchdog.arm();
 			});
 
 			proc.stderr?.on("data", (data) => {
-				armIdle();
 				error += data.toString();
+				watchdog.arm();
 			});
 
 			proc.on("close", (code) => {
-				if (idleHandle) clearTimeout(idleHandle);
+				watchdog.disarm();
 				if (buffer.trim()) processLine(buffer);
 				resolve(code ?? 0);
 			});

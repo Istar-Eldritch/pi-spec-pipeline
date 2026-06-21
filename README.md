@@ -148,6 +148,8 @@ config files are silently ignored for backward compatibility.
 | `contextFiles` | string[] | `[]` | Additional files to include as context |
 | `reviewCycles` | number | `3` | Code review cycles per phase (`0` = skip review) |
 | `skipPlanGeneration` | boolean | `false` | Skip plan generation (equivalent to `--no-plan`) |
+| `streamIdleTimeoutMs` | number | `90000` | Idle-timeout budget (ms) for the **model stream** — gaps between events while *no tool is executing* (catches a hung LLM provider connection). `0` disables. Also settable per-role via `models.<role>.streamIdleTimeoutMs` / per-tier via `tiers.<tier>.streamIdleTimeoutMs`. |
+| `toolStreamIdleTimeoutMs` | number | `0` | Idle-timeout budget (ms) that applies **while a tool is executing**. pi emits no heartbeat during long tool runs (e.g. a multi-minute `cargo test`), so this defaults to `0` (disabled) — tool runs are bounded by their own timeouts (the bash `timeout` arg, pi's tool timeout). Set to a positive value to also bound tool-run silence. Same per-role/per-tier override precedence as above. |
 | `worktree.basePath` | string | `.pi/worktrees` | Directory where implementation worktrees are created. Relative paths resolve against the project root. |
 | `worktree.setupScript` | string | — | Optional shell script run after worktree creation and before the pipeline starts (`cwd` = the new worktree). Non-zero exit aborts the run. |
 

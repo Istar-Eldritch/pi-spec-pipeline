@@ -667,3 +667,133 @@ describe("tier streamIdleTimeoutMs normalization", () => {
 		expect(config.tiers).toBeUndefined();
 	});
 });
+
+describe("toolStreamIdleTimeoutMs normalization", () => {
+	let tmpDir: string;
+
+	beforeEach(() => {
+		tmpDir = fs.mkdtempSync(
+			path.join(os.tmpdir(), "config-tool-timeout-test-"),
+		);
+		fs.mkdirSync(path.join(tmpDir, ".pi"), { recursive: true });
+	});
+
+	afterEach(() => {
+		fs.rmSync(tmpDir, { recursive: true, force: true });
+	});
+
+	function writeConfig(config: object): void {
+		fs.writeFileSync(
+			path.join(tmpDir, ".pi", "spec-pipeline.json"),
+			JSON.stringify(config),
+			"utf-8",
+		);
+	}
+
+	function loadConfig(): ProjectConfig {
+		const result = loadPipelineConfig(tmpDir);
+		if (!result.success) throw new Error((result as any).error);
+		return (result as any).config;
+	}
+
+	// Project-level toolStreamIdleTimeoutMs must propagate into every resolved
+	// per-role ModelConfig so the runtime watchdog (agents.ts) receives the
+	// tool-execution budget regardless of which role is running.
+	it("project-level toolStreamIdleTimeoutMs propagates into per-role configs", () => {
+		writeConfig({
+			toolStreamIdleTimeoutMs: 1_200_000,
+			tiers: {
+				strong: { model: "claude-bridge/claude-opus-4-8", thinking: "high" },
+				mid: { model: "claude-bridge/claude-sonnet-4-6", thinking: "high" },
+				cheap: { model: "claude-bridge/claude-haiku-4-5", thinking: "off" },
+			},
+		});
+		const config = loadConfig();
+		// Every role resolves from a tier and must inherit the tool budget.
+		expect(config.models.planDrafter.toolStreamIdleTimeoutMs).toBe(1_200_000);
+		expect(config.models.implementer.toolStreamIdleTimeoutMs).toBe(1_200_000);
+		expect(config.models.codeReviewer.toolStreamIdleTimeoutMs).toBe(1_200_000);
+		expect(config.models.addressReview.toolStreamIdleTimeoutMs).toBe(1_200_000);
+		expect(config.models.agentCommitMessageWriter.toolStreamIdleTimeoutMs).toBe(
+			1_200_000,
+		);
+		// Tiers must also inherit it (escalated-tier agents read from tiers).
+		expect(config.tiers?.strong?.toolStreamIdleTimeoutMs).toBe(1_200_000);
+		expect(config.tiers?.mid?.toolStreamIdleTimeoutMs).toBe(1_200_000);
+		expect(config.tiers?.cheap?.toolStreamIdleTimeoutMs).toBe(1_200_000);
+		// And the project-level value is echoed on the resolved config.
+		expect(config.toolStreamIdleTimeoutMs).toBe(1_200_000);
+	});
+
+	it("explicit per-role toolStreamIdleTimeoutMs takes precedence over project-level", () => {
+		writeConfig({
+			toolStreamIdleTimeoutMs: 1_200_000,
+			models: {
+				implementer: {
+					model: "claude-bridge/claude-sonnet-4-6",
+					thinking: "high",
+					toolStreamIdleTimeoutMs: 300_000,
+				},
+			},
+		});
+		const config = loadConfig();
+		expect(config.models.implementer.toolStreamIdleTimeoutMs).toBe(300_000);
+		// Other roles still inherit the project-level default.
+		expect(config.models.codeReviewer.toolStreamIdleTimeoutMs).toBe(1_200_000);
+	});
+
+	it("explicit toolStreamIdleTimeoutMs on a tier takes precedence over project-level", () => {
+		writeConfig({
+			toolStreamIdleTimeoutMs: 1_200_000,
+			tiers: {
+				strong: {
+					model: "claude-bridge/claude-opus-4-8",
+					thinking: "high",
+					toolStreamIdleTimeoutMs: 600_000,
+				},
+				mid: { model: "claude-bridge/claude-sonnet-4-6", thinking: "high" },
+			},
+		});
+		const config = loadConfig();
+		expect(config.tiers?.strong?.toolStreamIdleTimeoutMs).toBe(600_000);
+		expect(config.tiers?.mid?.toolStreamIdleTimeoutMs).toBe(1_200_000);
+		// planDrafter resolves from strong → must reflect strong's explicit value.
+		expect(config.models.planDrafter.toolStreamIdleTimeoutMs).toBe(600_000);
+		// codeReviewer also resolves from strong.
+		expect(config.models.codeReviewer.toolStreamIdleTimeoutMs).toBe(600_000);
+		// implementer resolves from mid → inherits the project default.
+		expect(config.models.implementer.toolStreamIdleTimeoutMs).toBe(1_200_000);
+	});
+
+	it("no project-level toolStreamIdleTimeoutMs → per-role values are undefined", () => {
+		writeConfig({
+			tiers: {
+				strong: { model: "claude-bridge/claude-opus-4-8", thinking: "high" },
+			},
+		});
+		const config = loadConfig();
+		// No project-level fallback → roles must NOT carry a toolStreamIdleTimeoutMs.
+		expect(config.models.planDrafter.toolStreamIdleTimeoutMs).toBeUndefined();
+		expect(config.tiers?.strong?.toolStreamIdleTimeoutMs).toBeUndefined();
+		expect(config.toolStreamIdleTimeoutMs).toBeUndefined();
+	});
+
+	it("streamIdleTimeoutMs and toolStreamIdleTimeoutMs propagate independently", () => {
+		// Regression guard: the two budgets are distinct knobs; setting one must
+		// not clobber or imply the other.
+		writeConfig({
+			streamIdleTimeoutMs: 1_800_000,
+			toolStreamIdleTimeoutMs: 0,
+			tiers: {
+				strong: { model: "claude-bridge/claude-opus-4-8", thinking: "high" },
+				mid: { model: "claude-bridge/claude-sonnet-4-6", thinking: "high" },
+				cheap: { model: "claude-bridge/claude-haiku-4-5", thinking: "off" },
+			},
+		});
+		const config = loadConfig();
+		expect(config.models.codeReviewer.streamIdleTimeoutMs).toBe(1_800_000);
+		expect(config.models.codeReviewer.toolStreamIdleTimeoutMs).toBe(0);
+		expect(config.tiers?.strong?.streamIdleTimeoutMs).toBe(1_800_000);
+		expect(config.tiers?.strong?.toolStreamIdleTimeoutMs).toBe(0);
+	});
+});

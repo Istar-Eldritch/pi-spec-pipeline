@@ -25,7 +25,18 @@ export const ModelConfigSchema = Type.Object({
 	model: ModelNameSchema,
 	thinking: ThinkingLevelSchema,
 	// Per-role override for the streaming idle-timeout watchdog (ms). 0 disables.
+	// This budget applies to the MODEL STREAM — i.e. gaps between events while
+	// no tool is executing (catches a hung provider connection). It does NOT
+	// apply while a tool is running; tools have their own timeouts (the bash
+	// `timeout` arg, pi's tool timeout) and pi emits no heartbeat during
+	// long tool execution, so the stream watchdog would otherwise kill a
+	// healthy subprocess running a legitimately long command.
 	streamIdleTimeoutMs: Type.Optional(Type.Number({ minimum: 0 })),
+	// Per-role override for the idle-timeout budget that applies WHILE A TOOL
+	// IS EXECUTING (ms). 0 (default) disables the watchdog during tool
+	// execution entirely, deferring to the tool's own timeout. Set to a
+	// positive value to also bound tool-run silence.
+	toolStreamIdleTimeoutMs: Type.Optional(Type.Number({ minimum: 0 })),
 	// Some models (e.g. Ollama-hosted models) reject conversations where pi
 	// injects the appended system prompt as an assistant-role prefill. Set to
 	// "inline" to prepend the system prompt into the task string instead, keeping
@@ -105,7 +116,13 @@ export const SpecPipelineConfigSchema = Type.Object({
 	skipPlanGeneration: Type.Optional(Type.Boolean()),
 	// Project-level default for the streaming idle-timeout watchdog (ms). 0 disables.
 	// Per-role values in `models.<role>.streamIdleTimeoutMs` take precedence.
+	// Applies to the model stream (gaps while no tool is running).
 	streamIdleTimeoutMs: Type.Optional(Type.Number({ minimum: 0 })),
+	// Project-level default for the idle-timeout budget that applies WHILE A
+	// TOOL IS EXECUTING (ms). 0 (default) disables the watchdog during tool
+	// execution. Per-role values in `models.<role>.toolStreamIdleTimeoutMs`
+	// take precedence.
+	toolStreamIdleTimeoutMs: Type.Optional(Type.Number({ minimum: 0 })),
 	// Worktree isolation settings for /implement runs.
 	worktree: Type.Optional(WorktreeConfigSchema),
 });
@@ -213,7 +230,11 @@ export interface ProjectConfig {
 	// Experimental: skip plan generation (go directly from spec to implementation)
 	skipPlanGeneration: boolean;
 	// Project-level default for streaming idle-timeout watchdog (ms). undefined → fall back to env / 90s.
+	// Applies to the model stream (gaps while no tool is running).
 	streamIdleTimeoutMs?: number;
+	// Project-level default for the idle-timeout budget while a TOOL IS
+	// EXECUTING (ms). undefined → fall back to env / 0 (disabled). 0 disables.
+	toolStreamIdleTimeoutMs?: number;
 	// True when models were not configured and the pipeline is falling back to
 	// the user's current/default model (omitting --model/--thinking on subagent calls).
 	usingDefaultModels?: boolean;

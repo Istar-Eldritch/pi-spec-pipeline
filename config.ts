@@ -214,6 +214,7 @@ function mergeWithDefaults(
 	userTiers: TiersConfig | undefined,
 	userReviewCycles: ReviewCyclesConfig | undefined,
 	projectStreamIdleTimeoutMs: number | undefined,
+	projectToolStreamIdleTimeoutMs: number | undefined,
 ): {
 	models: ProjectConfig["models"];
 	reviewCycles: ProjectConfig["reviewCycles"];
@@ -244,12 +245,28 @@ function mergeWithDefaults(
 	};
 
 	// Apply project-level streamIdleTimeoutMs as fallback when per-role isn't set.
+	// (Model-stream watchdog — gaps while no tool is running.)
 	if (projectStreamIdleTimeoutMs !== undefined) {
 		for (const role of Object.keys(models) as Array<keyof typeof models>) {
 			if (models[role].streamIdleTimeoutMs === undefined) {
 				models[role] = {
 					...models[role],
 					streamIdleTimeoutMs: projectStreamIdleTimeoutMs,
+				};
+			}
+		}
+	}
+
+	// Apply project-level toolStreamIdleTimeoutMs as fallback when per-role isn't set.
+	// (Tool-execution watchdog — gaps while a tool is running. Defaults to 0 /
+	// disabled since tools have their own timeouts and pi emits no heartbeat
+	// during long tool runs.)
+	if (projectToolStreamIdleTimeoutMs !== undefined) {
+		for (const role of Object.keys(models) as Array<keyof typeof models>) {
+			if (models[role].toolStreamIdleTimeoutMs === undefined) {
+				models[role] = {
+					...models[role],
+					toolStreamIdleTimeoutMs: projectToolStreamIdleTimeoutMs,
 				};
 			}
 		}
@@ -382,6 +399,7 @@ function buildProjectConfig(
 		config.tiers,
 		config.reviewCycles,
 		config.streamIdleTimeoutMs,
+		config.toolStreamIdleTimeoutMs,
 	);
 
 	// Skip plan generation (experimental A/B testing)
@@ -392,17 +410,35 @@ function buildProjectConfig(
 	// Without this, escalated-tier agents receive a ModelConfig without
 	// streamIdleTimeoutMs and fall back to the hardcoded 90 s watchdog default,
 	// even when the project config specifies a much longer timeout.
+	//
+	// Also propagate toolStreamIdleTimeoutMs (the tool-execution budget) so
+	// escalated tiers inherit the same tool-watchdog policy as base roles.
 	const normalizedTiers: typeof config.tiers = (() => {
-		if (!config.tiers || config.streamIdleTimeoutMs === undefined)
+		if (
+			!config.tiers ||
+			(config.streamIdleTimeoutMs === undefined &&
+				config.toolStreamIdleTimeoutMs === undefined)
+		)
 			return config.tiers;
 		const result = { ...config.tiers };
 		for (const tier of ["strong", "mid", "cheap"] as const) {
 			const t = result[tier];
-			if (t && t.streamIdleTimeoutMs === undefined) {
-				result[tier] = {
-					...t,
-					streamIdleTimeoutMs: config.streamIdleTimeoutMs,
-				};
+			if (!t) continue;
+			const patch: Partial<typeof t> = {};
+			if (
+				config.streamIdleTimeoutMs !== undefined &&
+				t.streamIdleTimeoutMs === undefined
+			) {
+				patch.streamIdleTimeoutMs = config.streamIdleTimeoutMs;
+			}
+			if (
+				config.toolStreamIdleTimeoutMs !== undefined &&
+				t.toolStreamIdleTimeoutMs === undefined
+			) {
+				patch.toolStreamIdleTimeoutMs = config.toolStreamIdleTimeoutMs;
+			}
+			if (Object.keys(patch).length > 0) {
+				result[tier] = { ...t, ...patch };
 			}
 		}
 		return result;
@@ -428,6 +464,7 @@ function buildProjectConfig(
 		reviewCycles,
 		skipPlanGeneration,
 		streamIdleTimeoutMs: config.streamIdleTimeoutMs,
+		toolStreamIdleTimeoutMs: config.toolStreamIdleTimeoutMs,
 		worktree: {
 			basePath: config.worktree?.basePath ?? DEFAULT_WORKTREE_BASE_PATH,
 			...(normalizedSetupScript !== undefined
